@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seamly-engine"
+version = "0.1.0"
+description = "Headless Seamly2D-compatible pattern engine with a VLA-oriented state representation"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["seamly_engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

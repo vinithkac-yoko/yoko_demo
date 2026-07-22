@@ -1,0 +1,7 @@
+# Backend runtime deps. The engine is imported from ../engine (installed with
+# `pip install -e ./engine`).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2
+# Agent loop (wire when ANTHROPIC_API_KEY is set):
+# claude-agent-sdk>=0.1

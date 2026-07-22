@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<vst>
+    <!--Measurements created with Seamly2D v2023.11.20.149 (https://seamly.io/).-->
+    <version>0.4.4</version>
+    <read-only>false</read-only>
+    <notes/>
+    <unit>cm</unit>
+    <pm_system>998</pm_system>
+    <size base="34"/>
+    <height base="164"/>
+    <body-measurements>
+        <m base="166" height_increase="0" name="height" size_increase="0"/>
+        <m base="6" height_increase="0" name="size" size_increase="2"/>
+        <m base="76" height_increase="0" name="bust_circ" size_increase="4"/>
+        <m base="60" height_increase="0" name="waist_circ" size_increase="4"/>
+        <m base="70" height_increase="0" name="highhip_circ" size_increase="4"/>
+        <m base="84" height_increase="0" name="hip_circ" size_increase="4"/>
+        <m base="31.4" height_increase="0" name="across_back_b" size_increase="1"/>
+        <m base="28.8" height_increase="0" name="across_chest_f" size_increase="1.2"/>
+        <m base="11.5" height_increase="0" name="shoulder_length" size_increase="0.25"/>
+        <m base="34" height_increase="0" name="neck_circ" size_increase="1"/>
+        <m base="5.2" height_increase="0" name="dart_width_shoulder" size_increase="0.6"/>
+        <m base="24.8" height_increase="0" name="arm_upper_circ" size_increase="1.2"/>
+        <m base="14.5" height_increase="0" name="arm_wrist_circ" size_increase="0.5"/>
+        <m base="22.5" height_increase="0" name="leg_ankle_circ" size_increase="0.5"/>
+        <m base="19.5" height_increase="0" name="leg_ankle_high_circ" size_increase="0.5"/>
+        <m base="39.8" height_increase="0" name="neck_back_to_waist_b" size_increase="0.4"/>
+        <m base="39.8" height_increase="0" name="neck_side_to_waist_f" size_increase="0.4"/>
+        <m base="19.8" height_increase="0" name="armscye_length" size_increase="0.4"/>
+        <m base="57" height_increase="0" name="height_waist_side_to_knee" size_increase="0.5"/>
+        <m base="19.7" height_increase="0" name="height_waist_side_to_hip" size_increase="0.3"/>
+        <m base="101" height_increase="0" name="height_waist_side" size_increase="1"/>
+        <m base="25.9" height_increase="0" name="rise_length_side_sitting" size_increase="0.7"/>
+        <m base="57" height_increase="0" name="arm_shoulder_tip_to_wrist_bent" size_increase="0.5"/>
+        <m base="0" height_increase="0" name="armscye_width" size_increase="0"/>
+        <m base="0" height_increase="0" name="armscye_circ" size_increase="0"/>
+        <m base="0" height_increase="0" name="arm_elbow_circ" size_increase="0"/>
+        <m base="0" height_increase="0" name="bustpoint_to_bustpoint_halter" size_increase="0"/>
+        <m base="0" height_increase="0" name="arm_armpit_to_wrist" size_increase="0"/>
+    </body-measurements>
+</vst>
