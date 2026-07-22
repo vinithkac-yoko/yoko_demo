@@ -1,0 +1,9 @@
+# Railway / Nixpacks build config.
+# cairo is the system library cairosvg needs to rasterize the pattern for the
+# VLA's vision input. If it's ever unavailable, the agent falls back to
+# state-only reasoning (see backend/agent.py:_render_png), so the app still runs.
+[phases.setup]
+nixPkgs = ["python311", "cairo", "pkg-config"]
+
+[start]
+cmd = "uvicorn app:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000}"

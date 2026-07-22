@@ -26,7 +26,7 @@ engine/     Headless Seamly2D engine (Python) — the core
     state.py         the VLA state representation (semantic tagging)
     render.py        SVG (construction dimmed, final bold)
   tests/             pytest suite + real fixtures (Aldrich basic set)
-backend/    FastAPI + Claude Agent SDK loop (per-operation tools)
+backend/    FastAPI + Anthropic tool-use agent loop (vision + per-operation tools)
 app/        Mobile-responsive PWA chat client
 ```
 
@@ -60,10 +60,30 @@ print(state['coverage'])         # {'total': 425, 'resolved': 425, 'fraction': 1
 "
 
 # Backend + PWA
-cd ../backend
-pip install -r requirements.txt
-uvicorn app:app --port 8000      # open http://localhost:8000 on your phone/browser
+cd ..
+pip install -r requirements.txt              # installs engine + backend
+export ANTHROPIC_API_KEY=sk-ant-...          # enables the VLA agent loop
+uvicorn app:app --app-dir backend --port 8000
+# open http://localhost:8000 on your phone/browser
 ```
 
-Set `ANTHROPIC_API_KEY` to enable the agent loop; without it the engine, state
-export, render, and edit/delete paths are still fully exercisable.
+Without `ANTHROPIC_API_KEY` the engine, state export, render, and edit/delete
+paths are still fully exercisable; the chat just returns a stub. The agent uses
+`claude-opus-4-8` with adaptive thinking, reasoning over the **structured state**
+(primary) plus the **rendered image** (when a raster backend is present), and
+calls one tool per operation (`edit_formula`, `delete_object`, …).
+
+## Deploy on Railway
+
+The repo is Railway-ready (Nixpacks). Push it to a Railway service:
+
+- `requirements.txt` (root) installs the engine + backend; `Procfile` / `nixpacks.toml`
+  start `uvicorn` bound to `$PORT`.
+- `nixpacks.toml` installs `cairo` so the pattern rasterizes for the vision input.
+  If cairo is ever unavailable the agent falls back to state-only reasoning, so
+  the app still runs.
+- Set the `ANTHROPIC_API_KEY` variable in the Railway service. Optional:
+  `VLA_MODEL` (defaults to `claude-opus-4-8`).
+
+The PWA is served at `/` and talks to the same origin, so no separate frontend
+deploy is needed.

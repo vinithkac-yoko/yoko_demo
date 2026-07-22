@@ -86,6 +86,49 @@ def export_state(pattern: Pattern, ev: Evaluated,
     }
 
 
+def compact_state(pattern: Pattern, ev: Evaluated,
+                  measurements: MeasurementTable | None = None) -> dict:
+    """A token-lean view of the full state for the agent's prompt.
+
+    Same semantic tagging as :func:`export_state` but without the heavy per-curve
+    polylines/control-point arrays — the model reasons over roles, formulas,
+    dependencies, and point coordinates, not sampled geometry. Keeps the payload
+    small enough to send every turn alongside the rendered image.
+    """
+    full = export_state(pattern, ev, measurements)
+    objs = []
+    for o in full["objects"]:
+        rec = {
+            "id": o["id"],
+            "name": o["name"],
+            "kind": o["kind"],
+            "tool_type": o["tool_type"],
+            "role": o["role"],
+            "construction": o["is_construction"],
+            "final_outline": o["is_final_outline"],
+            "built_from": o["built_from"],
+            "dependents": o["dependents"],
+        }
+        g = o.get("geometry")
+        if g and g.get("type") == "point":
+            rec["xy"] = [g["x"], g["y"]]
+        if o["formula"]:
+            rec["formula"] = {
+                k: {"raw": v["raw"], "value": v.get("resolved")}
+                for k, v in o["formula"].items()
+            }
+        objs.append(rec)
+    return {
+        "pattern": full["pattern"],
+        "measurements": full["measurements"],
+        "variables": {k: v["value"] for k, v in full["variables"].items()},
+        "pieces": [{"name": p["name"], "objects": len(p["outline_object_ids"])}
+                   for p in full["pieces"]],
+        "coverage": {k: full["coverage"][k] for k in ("total", "resolved", "fraction")},
+        "objects": objs,
+    }
+
+
 def _build_dependents(pattern: Pattern) -> dict[int, list[int]]:
     dep: dict[int, set[int]] = {}
     for o in pattern.all_objects():

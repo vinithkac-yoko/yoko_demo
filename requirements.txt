@@ -1,0 +1,8 @@
+# Root requirements — used by Railway (Nixpacks) to build the whole app.
+# Installs the engine as an editable package plus the backend runtime.
+-e ./engine
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2
+anthropic>=0.69
+cairosvg>=2.7

@@ -173,10 +173,12 @@ The **vertical-slice engine is complete and proven on a real production file**
    rotation/moving operations and curve/arc mirroring, piece seam-allowance
    offsetting, and the `.sm2d` **writer** for round-trip.
 2. **Mutation API + validation/rollback** (`operations.py`) — the action layer
-   the agent tools call; delete = block-and-report.
-3. **Agent loop** — Agent SDK harness, per-operation tool schemas, persistent
-   multi-turn session, image + state prompting.
-4. **Phone PWA** — mobile chat UI + live pattern view over the backend.
+   the agent tools call; delete = block-and-report. *(done: edit/delete)*
+3. **Agent loop** — Anthropic Messages API tool-use loop, image + compact-state
+   prompting, per-operation tools. *(done for edit/delete; expand the add_* tool
+   set as parity grows)*
+4. **Phone PWA** — mobile chat UI + live pattern view over the backend. *(done;
+   Railway-deployable)*
 5. **Real-Seamly2D oracle** — automated cross-check (open engine output in the
    Seamly2D CLI, diff geometry) in CI.
 ```
