@@ -10,8 +10,16 @@ Run:  uvicorn app:app --reload --port 8000    (from the backend/ dir)
 
 from __future__ import annotations
 
+import sys
 import uuid
 from pathlib import Path
+
+# Make the headless engine importable without installing it or relying on
+# PYTHONPATH/start-command env handling (Railway/Nixpacks doesn't always apply an
+# inline `PYTHONPATH=engine` prefix). The engine package lives at <repo>/engine.
+_ENGINE_DIR = Path(__file__).resolve().parent.parent / "engine"
+if _ENGINE_DIR.is_dir() and str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response
