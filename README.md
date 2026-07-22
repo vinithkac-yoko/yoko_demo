@@ -59,11 +59,10 @@ state = se.export_state(pat, ev, meas)
 print(state['coverage'])         # {'total': 425, 'resolved': 425, 'fraction': 1.0, ...}
 "
 
-# Backend + PWA
-cd ..
-pip install -r requirements.txt              # installs engine + backend
+# Backend + PWA  (from the repo root)
+pip install -r requirements.txt              # PyPI deps (engine runs from PYTHONPATH)
 export ANTHROPIC_API_KEY=sk-ant-...          # enables the VLA agent loop
-uvicorn app:app --app-dir backend --port 8000
+PYTHONPATH=engine uvicorn app:app --app-dir backend --port 8000
 # open http://localhost:8000 on your phone/browser
 ```
 

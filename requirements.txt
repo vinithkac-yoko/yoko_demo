@@ -1,6 +1,8 @@
-# Root requirements — used by Railway (Nixpacks) to build the whole app.
-# Installs the engine as an editable package plus the backend runtime.
--e ./engine
+# Root requirements — used by Railway (Nixpacks) to build the app.
+# NOTE: the local `engine/` package is NOT installed here — during the Nixpacks
+# install phase only this file is present, so `-e ./engine` would fail ("not a
+# valid editable requirement"). Instead the engine dir is put on PYTHONPATH at
+# startup (see Procfile / nixpacks.toml). These are the PyPI deps only.
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2
