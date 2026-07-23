@@ -29,14 +29,26 @@ _STYLE = {
 
 
 def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
-               labels: bool = True, padding: float = 4.0) -> str:
+               labels: bool = True, padding: float = 4.0,
+               object_ids: set[int] | None = None, pieces=None) -> str:
+    """Rich construction view: all lines/points/curves, construction dimmed,
+    final-outline bold, final points labeled. Pass ``object_ids`` to draw only a
+    subset (e.g. one block's objects + their construction drivers). Pass
+    ``pieces`` to also overlay those pieces' connected seam outlines and internal
+    paths (darts/grainline) bold on top — this fills in the straight seam
+    segments that aren't standalone line objects."""
+    def inc(oid: int) -> bool:
+        return object_ids is None or oid in object_ids
+
     state = export_state(pattern, ev)
     role_of = {o["id"]: o["role"] for o in state["objects"]}
     final_of = {o["id"]: o["is_final_outline"] for o in state["objects"]}
 
-    xs = [p.x for p in ev.points.values()]
-    ys = [p.y for p in ev.points.values()]
-    for c in ev.curves.values():
+    xs = [p.x for oid, p in ev.points.items() if inc(oid)]
+    ys = [p.y for oid, p in ev.points.items() if inc(oid)]
+    for oid, c in ev.curves.items():
+        if not inc(oid):
+            continue
         for p in c.polyline(8):
             xs.append(p.x); ys.append(p.y)
     if not xs:
@@ -64,6 +76,8 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
 
     # curves first (under points)
     for oid, curve in ev.curves.items():
+        if not inc(oid):
+            continue
         role = role_of.get(oid, "curve")
         color, w, dash = _STYLE.get(role, _STYLE["curve"])
         if final_of.get(oid):
@@ -75,7 +89,7 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
 
     # lines
     for o in pattern.all_objects():
-        if o.tag != "line":
+        if o.tag != "line" or not inc(o.id):
             continue
         p1 = ev.points.get(_ref(o, "firstPoint"))
         p2 = ev.points.get(_ref(o, "secondPoint"))
@@ -90,8 +104,32 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
             f'<line x1="{sx(p1.x):.1f}" y1="{sy(p1.y):.1f}" x2="{sx(p2.x):.1f}" '
             f'y2="{sy(p2.y):.1f}" stroke="{color}" stroke-width="{w}"{da}/>')
 
+    # overlay the connected seam outlines + internal paths of the given pieces
+    if pieces:
+        from . import pieces as P
+        for pc in pieces:
+            outline = P.piece_outline_points(pattern, ev, pc)
+            if len(outline) >= 2:
+                d = "M " + " L ".join(f"{sx(p.x):.1f},{sy(p.y):.1f}" for p in outline)
+                parts.append(f'<path d="{d}" fill="none" stroke="#111" '
+                             f'stroke-width="2.4" stroke-linejoin="round"/>')
+            for role, _name, pts in P.piece_internal_paths(pattern, ev, pc):
+                color, w, dash = _PATH_STROKE.get(role, _PATH_STROKE["guide"])
+                dd = "M " + " L ".join(f"{sx(p.x):.1f},{sy(p.y):.1f}" for p in pts)
+                da = f' stroke-dasharray="{dash}"' if dash else ""
+                parts.append(f'<path d="{dd}" fill="none" stroke="{color}" '
+                             f'stroke-width="{w}"{da}/>')
+            grain = P.piece_grainline(pattern, ev, pc)
+            if grain:
+                a, b = grain
+                parts.append(f'<line x1="{sx(a.x):.1f}" y1="{sy(a.y):.1f}" '
+                             f'x2="{sx(b.x):.1f}" y2="{sy(b.y):.1f}" '
+                             f'stroke="#16a34a" stroke-width="1.4"/>')
+
     # points + labels
     for oid, p in ev.points.items():
+        if not inc(oid):
+            continue
         role = role_of.get(oid, "construction")
         is_final = final_of.get(oid)
         r = 2.4 if is_final else 1.4

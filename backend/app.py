@@ -28,8 +28,8 @@ from pydantic import BaseModel
 
 import seamly_engine as se
 from seamly_engine.operations import PatternSession
-from seamly_engine.pieces import piece_by_id
-from seamly_engine.state import list_pieces, piece_state
+from seamly_engine.pieces import group_pieces, pieces_for_key
+from seamly_engine.state import block_state, list_blocks
 
 import agent
 
@@ -40,7 +40,7 @@ PWA_DIR = ROOT / "app"
 app = FastAPI(title="VLA Pattern Drafting")
 
 _SESSIONS: dict[str, PatternSession] = {}
-_ACTIVE: dict[str, int] = {}  # session id -> active piece (block) id
+_ACTIVE: dict[str, str] = {}  # session id -> active block key (e.g. "A")
 
 
 class NewSession(BaseModel):
@@ -48,27 +48,36 @@ class NewSession(BaseModel):
     measurements: str = "aldrich_measurements.vst"
 
 
-class SelectPiece(BaseModel):
-    piece_id: int
+class SelectBlock(BaseModel):
+    block: str  # block key, e.g. "A"
 
 
 class Message(BaseModel):
     text: str
 
 
-def _pieces_payload(sid: str, sess: PatternSession, reply: str | None = None) -> dict:
-    """Response for the block-picker: which blocks are available."""
-    return {"session_id": sid, "reply": reply, "pieces": list_pieces(sess.pattern)}
+def _blocks_payload(sid: str, sess: PatternSession, reply: str | None = None) -> dict:
+    """Response for the block-picker: which blocks (garments) are available."""
+    return {"session_id": sid, "reply": reply, "blocks": list_blocks(sess.pattern)}
 
 
-def _block_payload(sid: str, sess: PatternSession, piece, reply: str | None = None) -> dict:
-    """Response for the active-block view: scoped state + single-piece render."""
+def _block_label(sess: PatternSession, key: str) -> str:
+    for g in group_pieces(sess.pattern):
+        if g["key"] == key:
+            return g["label"]
+    return key
+
+
+def _block_payload(sid: str, sess: PatternSession, key: str, pieces,
+                   reply: str | None = None) -> dict:
+    """Response for the active-block view: scoped state + rich scoped render."""
+    label = _block_label(sess, key)
     return {
         "session_id": sid,
         "reply": reply,
-        "piece": {"id": piece.id, "name": piece.name},
-        "state": piece_state(sess.pattern, sess.evaluated, piece, sess.measurements),
-        "svg": agent.render_svg_for(sess, piece),
+        "block": {"key": key, "label": label, "pieces": [p.name for p in pieces]},
+        "state": block_state(sess.pattern, sess.evaluated, pieces, sess.measurements, label=label),
+        "svg": agent.render_svg_for(sess, pieces),
     }
 
 
@@ -82,36 +91,36 @@ def create_session(body: NewSession) -> dict:
                              se.load_measurements(str(meas)) if meas.exists() else None)
     sid = uuid.uuid4().hex[:12]
     _SESSIONS[sid] = session
-    return _pieces_payload(sid, session,
-                           reply="Which block would you like to work on?")
+    return _blocks_payload(sid, session, reply="Which block would you like to work on?")
 
 
-@app.post("/api/session/{sid}/select_piece")
-def select_piece(sid: str, body: SelectPiece) -> dict:
+@app.post("/api/session/{sid}/select_block")
+def select_block(sid: str, body: SelectBlock) -> dict:
     sess = _get(sid)
-    piece = piece_by_id(sess.pattern, body.piece_id)
-    if piece is None:
-        raise HTTPException(404, f"no block with id {body.piece_id}")
-    _ACTIVE[sid] = piece.id
-    return _block_payload(sid, sess, piece,
-                          reply=f"Working on “{piece.name}”. What would you like to change?")
+    pieces = pieces_for_key(sess.pattern, body.block)
+    if not pieces:
+        raise HTTPException(404, f"no block {body.block!r}")
+    _ACTIVE[sid] = body.block
+    label = _block_label(sess, body.block)
+    return _block_payload(sid, sess, body.block, pieces,
+                          reply=f"Working on the {label} block. What would you like to change?")
 
 
 @app.get("/api/session/{sid}/render.svg")
 def get_render(sid: str) -> Response:
     sess = _get(sid)
-    piece = _active_piece(sid, sess)
-    return Response(content=agent.render_svg_for(sess, piece), media_type="image/svg+xml")
+    _, pieces = _active_block(sid, sess)
+    return Response(content=agent.render_svg_for(sess, pieces), media_type="image/svg+xml")
 
 
 @app.post("/api/session/{sid}/message")
 def post_message(sid: str, body: Message) -> dict:
     sess = _get(sid)
-    piece = _active_piece(sid, sess)
-    if piece is None:
+    key, pieces = _active_block(sid, sess)
+    if not pieces:
         raise HTTPException(400, "select a block first")
-    result = agent.run_turn(sess, body.text, piece)
-    return _block_payload(sid, sess, piece, reply=result["reply"]) | {
+    result = agent.run_turn(sess, body.text, pieces, label=_block_label(sess, key))
+    return _block_payload(sid, sess, key, pieces, reply=result["reply"]) | {
         "tool_calls": result["tool_calls"]}
 
 
@@ -122,9 +131,9 @@ def _get(sid: str) -> PatternSession:
     return sess
 
 
-def _active_piece(sid: str, sess: PatternSession):
-    pid = _ACTIVE.get(sid)
-    return piece_by_id(sess.pattern, pid) if pid is not None else None
+def _active_block(sid: str, sess: PatternSession):
+    key = _ACTIVE.get(sid)
+    return (key, pieces_for_key(sess.pattern, key)) if key else (None, [])
 
 
 @app.get("/", response_class=HTMLResponse)

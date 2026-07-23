@@ -130,7 +130,7 @@ def compact_state(pattern: Pattern, ev: Evaluated,
 
 
 def list_pieces(pattern: Pattern) -> list[dict]:
-    """The blocks/pieces the user can choose to work on."""
+    """Individual pieces (front/back). See :func:`list_blocks` for garment-level."""
     from .pieces import piece_calc_ids
     return [
         {"id": p.id, "name": p.name, "seam_allowance": p.seam_allowance,
@@ -139,53 +139,43 @@ def list_pieces(pattern: Pattern) -> list[dict]:
     ]
 
 
-def piece_state(pattern: Pattern, ev: Evaluated, piece,
-                measurements: MeasurementTable | None = None) -> dict:
-    """Compact state scoped to a single block: the piece's real objects plus the
-    construction geometry that drives them (transitive dependencies). Much
-    smaller than the whole pattern and focuses the agent on one block."""
-    from .pieces import piece_calc_ids
+def list_blocks(pattern: Pattern) -> list[dict]:
+    """The **blocks** (garments: Skirt / Trousers / Bodice / Sleeve) the user can
+    choose to work on. Each groups its front/back pieces."""
+    from .pieces import group_pieces, pieces_for_key, scoped_ids
+    out = []
+    for g in group_pieces(pattern):
+        ps = pieces_for_key(pattern, g["key"])
+        out.append({
+            "key": g["key"], "label": g["label"], "pieces": g["pieces"],
+            "object_count": len(scoped_ids(pattern, ps)),
+        })
+    return out
 
-    by_id = pattern.object_by_id()
-    # map an inline output point (trueDarts / operation destination) to the
-    # element that produces it, so the closure can reach its inputs.
-    producer: dict[int, int] = {}
-    for o in pattern.all_objects():
-        if o.tool_type == "trueDarts":
-            for a in ("point1", "point2"):
-                v = o.raw.get(a, "")
-                if v.isdigit():
-                    producer[int(v)] = o.id
-        elif o.tag == "operation":
-            for ch in o.children:
-                d = ch.get("dst", "")
-                if d.isdigit():
-                    producer[int(d)] = o.id
 
-    relevant = set(piece_calc_ids(pattern, piece))
-    stack = list(relevant)
-    while stack:
-        oid = stack.pop()
-        o = by_id.get(oid)
-        if o is None:
-            prod = producer.get(oid)
-            if prod is not None and prod not in relevant:
-                relevant.add(prod); stack.append(prod)
-            continue
-        for r in o.refs:
-            if r not in relevant:
-                relevant.add(r); stack.append(r)
-
+def block_state(pattern: Pattern, ev: Evaluated, target_pieces,
+                measurements: MeasurementTable | None = None, *, label: str = "") -> dict:
+    """Compact state scoped to a block (one or more pieces): their real objects
+    plus the construction geometry that drives them. Much smaller than the whole
+    pattern and focuses the agent on one block."""
+    from .pieces import scoped_ids
+    relevant = scoped_ids(pattern, list(target_pieces))
     full = compact_state(pattern, ev, measurements)
     scoped = [o for o in full["objects"] if o["id"] in relevant]
     return {
-        "block": piece.name,
+        "block": label or (target_pieces[0].name if target_pieces else ""),
         "pattern": full["pattern"],
         "measurements": full["measurements"],
         "variables": full["variables"],
         "object_count": len(scoped),
         "objects": scoped,
     }
+
+
+def piece_state(pattern: Pattern, ev: Evaluated, piece,
+                measurements: MeasurementTable | None = None) -> dict:
+    """State scoped to a single piece (kept for the single-piece path/tests)."""
+    return block_state(pattern, ev, [piece], measurements, label=piece.name)
 
 
 def _build_dependents(pattern: Pattern) -> dict[int, list[int]]:

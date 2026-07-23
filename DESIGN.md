@@ -134,12 +134,16 @@ never inferred by the model.
 
 ### Block-scoped workflow
 
-The pattern has multiple **blocks** (pieces: skirt back/front, bodice, sleeve…).
-The UI asks which block to work on first, then shows *only that block's real
-outline* — reconstructed by walking the piece's node path (`pieces.py`), so real
-geometry is drawn by definition rather than guessed from line style. The agent's
-state and edits are scoped to the chosen block (`piece_state`), which also cuts
-each turn from ~114KB to ~17KB.
+The pattern is organized into **blocks** (garments: Skirt / Trousers / Bodice /
+Sleeve). Piece names encode this — `"A - Skirt Back"` / `"A - Skirt Front"` are
+the front/back pieces of block `A`; `pieces.group_pieces` groups them. The UI
+asks which block to work on first, then shows *only that block* in the rich
+construction view (all lines + points, construction dimmed, final bold), scoped
+to the block's objects + their construction drivers (`scoped_ids`). The connected
+seam outline of each piece is overlaid bold (`render_svg(pieces=…)`) so straight
+seam segments that aren't standalone line objects still read. The agent's state
+and edits are scoped to the block (`block_state`), cutting each turn from ~114KB
+to ~17–27KB and preventing edits leaking into another block.
 
 `render.py` produces the matching SVG (construction dimmed, final bold, darts and
 drill-holes styled, final points labeled) — the image the VLA sees and the phone

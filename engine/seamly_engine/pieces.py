@@ -33,6 +33,85 @@ def piece_by_id(pattern: Pattern, piece_id: int) -> Piece | None:
     return next((p for p in pattern.pieces if p.id == piece_id), None)
 
 
+def group_pieces(pattern: Pattern) -> list[dict]:
+    """Group pieces into **blocks** (garments). Piece names are like
+    ``"A - Skirt Back"`` / ``"A - Skirt Front"`` — the ``A``/``B``/``C`` prefix is
+    the block, and Front/Back are its pieces. Returns one entry per block with a
+    friendly label and the member piece ids."""
+    groups: dict[str, list[Piece]] = {}
+    order: list[str] = []
+    for p in pattern.pieces:
+        key = p.name.split(" - ", 1)[0].strip() if " - " in p.name else p.name
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(p)
+
+    out: list[dict] = []
+    for key in order:
+        ps = groups[key]
+        label = _block_label(ps)
+        out.append({
+            "key": key,
+            "label": label,
+            "piece_ids": [p.id for p in ps],
+            "pieces": [p.name for p in ps],
+        })
+    return out
+
+
+def _block_label(ps: list[Piece]) -> str:
+    """Derive a block name from its pieces by stripping the prefix and Front/Back."""
+    bases: list[str] = []
+    for p in ps:
+        n = p.name.split(" - ", 1)[1] if " - " in p.name else p.name
+        for w in (" Front", " Back", " front", " back"):
+            n = n.replace(w, "")
+        bases.append(n.strip())
+    return bases[0] if bases else "Block"
+
+
+def pieces_for_key(pattern: Pattern, key: str) -> list[Piece]:
+    return [p for p in pattern.pieces
+            if (p.name.split(" - ", 1)[0].strip() if " - " in p.name else p.name) == key]
+
+
+def scoped_ids(pattern: Pattern, target_pieces: list[Piece]) -> set[int]:
+    """Calc object ids for a set of pieces (a block): their real objects plus the
+    construction geometry that drives them (transitive dependencies)."""
+    by_id = pattern.object_by_id()
+    # inline output points (trueDarts / operation destinations) -> producer element
+    producer: dict[int, int] = {}
+    for o in pattern.all_objects():
+        if o.tool_type == "trueDarts":
+            for a in ("point1", "point2"):
+                v = o.raw.get(a, "")
+                if v.isdigit():
+                    producer[int(v)] = o.id
+        elif o.tag == "operation":
+            for ch in o.children:
+                d = ch.get("dst", "")
+                if d.isdigit():
+                    producer[int(d)] = o.id
+
+    relevant: set[int] = set()
+    for pc in target_pieces:
+        relevant |= piece_calc_ids(pattern, pc)
+    stack = list(relevant)
+    while stack:
+        oid = stack.pop()
+        o = by_id.get(oid)
+        if o is None:
+            prod = producer.get(oid)
+            if prod is not None and prod not in relevant:
+                relevant.add(prod); stack.append(prod)
+            continue
+        for r in o.refs:
+            if r not in relevant:
+                relevant.add(r); stack.append(r)
+    return relevant
+
+
 def classify_path(name: str, line_type: str = "") -> str:
     low = name.lower()
     if "dart" in low:

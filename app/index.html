@@ -63,7 +63,7 @@
 <script>
 const API = location.origin;
 let sessionId = null;
-let pieces = [];
+let blocks = [];
 const view = document.getElementById('view');
 const picker = document.getElementById('picker');
 const viewempty = document.getElementById('viewempty');
@@ -92,7 +92,7 @@ async function api(path, body) {
   return r.json();
 }
 
-function showPicker(pieces) {
+function showPicker(list) {
   svgHost.innerHTML = '';
   viewempty.style.display = 'none';
   picker.style.display = 'block';
@@ -102,12 +102,13 @@ function showPicker(pieces) {
   input.disabled = send.disabled = true;
   input.placeholder = 'Pick a block above to start';
   picker.innerHTML = '<h2>Which block do you want to work on?</h2>';
-  pieces.forEach(p => {
-    const b = document.createElement('button');
-    b.className = 'block';
-    b.innerHTML = `<span>${p.name}</span><small>${p.object_count} objects</small>`;
-    b.onclick = () => selectBlock(p.id, p.name);
-    picker.appendChild(b);
+  list.forEach(b => {
+    const el = document.createElement('button');
+    el.className = 'block';
+    const sub = b.pieces.length > 1 ? `${b.pieces.length} pieces` : '1 piece';
+    el.innerHTML = `<span>${b.label}</span><small>${sub}</small>`;
+    el.onclick = () => selectBlock(b.key, b.label);
+    picker.appendChild(el);
   });
 }
 
@@ -116,8 +117,9 @@ function showBlock(data) {
   viewempty.style.display = 'none';
   if (data.svg) svgHost.innerHTML = data.svg;
   back.style.display = 'inline-block';
-  title.innerHTML = `${data.piece.name} <span class="sub">· block</span>`;
-  if (data.state) stat.textContent = `${data.state.object_count} objects in this block`;
+  title.innerHTML = `${data.block.label} <span class="sub">· block</span>`;
+  if (data.state) stat.textContent =
+    `${data.block.pieces.join(' · ')} — ${data.state.object_count} objects`;
   input.disabled = send.disabled = false;
   input.placeholder = 'e.g. let out the waist 2cm';
   input.focus();
@@ -127,18 +129,18 @@ async function boot() {
   try {
     const data = await api('/api/session', {});
     sessionId = data.session_id;
-    pieces = data.pieces;
-    showPicker(pieces);
+    blocks = data.blocks;
+    showPicker(blocks);
     if (data.reply) addMsg(data.reply, 'bot');
   } catch (e) {
     viewempty.textContent = 'Could not reach backend. Start it with: uvicorn app:app --app-dir backend --port 8000';
   }
 }
 
-async function selectBlock(pieceId, name) {
-  addMsg('Work on: ' + name, 'user');
+async function selectBlock(key, label) {
+  addMsg('Work on: ' + label, 'user');
   try {
-    const data = await api(`/api/session/${sessionId}/select_piece`, {piece_id: pieceId});
+    const data = await api(`/api/session/${sessionId}/select_block`, {block: key});
     showBlock(data);
     if (data.reply) addMsg(data.reply, 'bot');
   } catch (e) {
@@ -164,7 +166,7 @@ async function submit() {
   }
 }
 
-back.onclick = () => showPicker(pieces);  // same session — edits persist
+back.onclick = () => showPicker(blocks);  // same session — edits persist
 send.onclick = submit;
 input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 boot();
