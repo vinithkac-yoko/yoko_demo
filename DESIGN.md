@@ -124,9 +124,22 @@ without real coordinates for `A13`/`A13a`.)
 ```
 
 Plus pattern-level context: measurements (resolved at current size/height),
-variables (formula + value), and the piece list. **Construction vs. final and
-all roles are *derived*** from `lineType`, piece/modeling membership, and
-internal-path names — never inferred by the model.
+variables (formula + value), and the piece list. **Construction vs. real is
+decided by piece membership, not line style.** `lineType` (solid/dotted/dashed)
+is cosmetic in Seamly — a dotted line can be a real dart leg, a solid line can be
+pure scaffolding. An object is *real* iff it (or its modeling copy) is referenced
+by a piece's outline `<nodes>` or one of its internal paths (darts/drill-holes/
+grainline); everything else is construction. Roles are derived the same way,
+never inferred by the model.
+
+### Block-scoped workflow
+
+The pattern has multiple **blocks** (pieces: skirt back/front, bodice, sleeve…).
+The UI asks which block to work on first, then shows *only that block's real
+outline* — reconstructed by walking the piece's node path (`pieces.py`), so real
+geometry is drawn by definition rather than guessed from line style. The agent's
+state and edits are scoped to the chosen block (`piece_state`), which also cuts
+each turn from ~114KB to ~17KB.
 
 `render.py` produces the matching SVG (construction dimmed, final bold, darts and
 drill-holes styled, final points labeled) — the image the VLA sees and the phone

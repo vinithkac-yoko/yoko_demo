@@ -204,3 +204,37 @@ def test_edit_formula_rolls_back_on_break():
     # original formula restored
     a1 = sess.pattern.object_by_id()[ids["A1"]]
     assert a1.raw["length"] == "5*#CM"
+
+
+# --- blocks / pieces ---------------------------------------------------------
+def test_list_pieces(evaluated):
+    from seamly_engine.state import list_pieces
+    pat, _, _ = evaluated
+    names = [p["name"] for p in list_pieces(pat)]
+    assert names == [
+        "A - Skirt Back", "A - Skirt Front", "B - Trousers Front",
+        "B - Trousers Back", "C - Bodice Back", "C - Bodice Front",
+        "D - 1 Piece Sleeve",
+    ]
+    assert all(p["object_count"] > 0 for p in list_pieces(pat))
+
+
+def test_piece_state_is_scoped(evaluated):
+    from seamly_engine.state import compact_state, piece_state
+    pat, meas, ev = evaluated
+    piece = next(p for p in pat.pieces if p.name == "C - Bodice Front")
+    ps = piece_state(pat, ev, piece, meas)
+    assert ps["block"] == "C - Bodice Front"
+    # scoped to far fewer objects than the whole pattern
+    assert 0 < ps["object_count"] < len(compact_state(pat, ev, meas)["objects"])
+    # and it includes final-outline (seamline) objects of the block
+    assert any(o["final_outline"] for o in ps["objects"])
+
+
+def test_render_piece_svg_draws_outline(evaluated):
+    from seamly_engine.render import render_piece_svg
+    pat, _, ev = evaluated
+    piece = next(p for p in pat.pieces if p.name == "C - Bodice Front")
+    svg = render_piece_svg(pat, ev, piece, width=600)
+    assert svg.startswith("<svg") and "<path" in svg  # a real outline path
+    assert "Z" in svg  # closed outline

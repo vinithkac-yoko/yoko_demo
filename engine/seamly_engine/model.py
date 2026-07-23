@@ -79,6 +79,7 @@ class PieceNode:
 
     object_id: int
     node_type: str  # NodePoint | NodeArc | NodeSpline | NodeSplinePath
+    reverse: bool = False  # traverse the curve backwards when walking the outline
 
 
 @dataclass
@@ -98,6 +99,8 @@ class Piece:
     nodes: list[PieceNode] = field(default_factory=list)
     internal_path_ids: list[int] = field(default_factory=list)
     grainline_anchor: int | None = None
+    grainline_rotation: float = 90.0
+    grainline_length: float = 0.0
     anchor_ids: list[int] = field(default_factory=list)
     raw: dict[str, str] = field(default_factory=dict)
 

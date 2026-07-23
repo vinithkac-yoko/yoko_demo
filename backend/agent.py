@@ -21,16 +21,16 @@ import os
 from typing import Any
 
 from seamly_engine.operations import OpResult, PatternSession
-from seamly_engine.render import render_svg
-from seamly_engine.state import compact_state
+from seamly_engine.render import render_piece_svg, render_svg
+from seamly_engine.state import compact_state, piece_state
 
 MODEL = os.getenv("VLA_MODEL", "claude-opus-4-8")
 MAX_ITERATIONS = 12
 
 SYSTEM_PROMPT = """\
 You are a VLA (vision-language-action) agent that edits sewing patterns in a \
-headless Seamly2D-compatible engine. You perform **instructed edits** on a base \
-pattern.
+headless Seamly2D-compatible engine. You perform **instructed edits** on ONE \
+block (pattern piece) at a time — the user has already chosen which block.
 
 You reason over TWO representations of the current state, not a screenshot alone:
 1. A structured JSON state where every object (point/line/arc/spline) is \
@@ -99,28 +99,38 @@ def dispatch_tool(session: PatternSession, name: str, args: dict) -> OpResult:
     return OpResult(False, f"unknown tool {name!r}")
 
 
-def _render_png(session: PatternSession) -> bytes | None:
-    """Rasterize the pattern to PNG for the vision input. Returns None if no
-    raster backend is installed — the agent then runs state-only (by design)."""
+def render_svg_for(session: PatternSession, piece=None) -> str:
+    """SVG of the active block (or the whole pattern if no block is selected)."""
+    if piece is not None:
+        return render_piece_svg(session.pattern, session.evaluated, piece, width=1000)
+    return render_svg(session.pattern, session.evaluated, width=1000)
+
+
+def _render_png(session: PatternSession, piece=None) -> bytes | None:
+    """Rasterize the block to PNG for the vision input. Returns None if no raster
+    backend is installed — the agent then runs state-only (by design)."""
     try:
         import cairosvg  # optional; needs libcairo at runtime
     except Exception:
         return None
     try:
-        svg = render_svg(session.pattern, session.evaluated, width=1000)
-        return cairosvg.svg2png(bytestring=svg.encode(), output_width=1000)
+        return cairosvg.svg2png(bytestring=render_svg_for(session, piece).encode(),
+                                output_width=1000)
     except Exception:
         return None
 
 
-def _state_block(session: PatternSession) -> dict:
-    state = compact_state(session.pattern, session.evaluated, session.measurements)
-    return {"type": "text", "text": "PATTERN STATE (JSON):\n" + json.dumps(state)}
+def _state_block(session: PatternSession, piece=None) -> dict:
+    if piece is not None:
+        state = piece_state(session.pattern, session.evaluated, piece, session.measurements)
+    else:
+        state = compact_state(session.pattern, session.evaluated, session.measurements)
+    return {"type": "text", "text": "BLOCK STATE (JSON):\n" + json.dumps(state)}
 
 
-def _user_turn(session: PatternSession, user_text: str) -> list[dict]:
-    content: list[dict] = [{"type": "text", "text": user_text}, _state_block(session)]
-    png = _render_png(session)
+def _user_turn(session: PatternSession, user_text: str, piece=None) -> list[dict]:
+    content: list[dict] = [{"type": "text", "text": user_text}, _state_block(session, piece)]
+    png = _render_png(session, piece)
     if png is not None:
         content.append({
             "type": "image",
@@ -133,9 +143,9 @@ def _user_turn(session: PatternSession, user_text: str) -> list[dict]:
     return content
 
 
-def run_turn(session: PatternSession, user_text: str) -> dict:
-    """Run one chat turn: model reasons over image+state, calls operation tools,
-    returns its final text plus the tool calls it made."""
+def run_turn(session: PatternSession, user_text: str, piece=None) -> dict:
+    """Run one chat turn on the active block: model reasons over image+state,
+    calls operation tools, returns its final text plus the tool calls it made."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         return {
             "reply": (
@@ -149,7 +159,7 @@ def run_turn(session: PatternSession, user_text: str) -> dict:
     import anthropic
 
     client = anthropic.Anthropic()
-    messages: list[dict] = [{"role": "user", "content": _user_turn(session, user_text)}]
+    messages: list[dict] = [{"role": "user", "content": _user_turn(session, user_text, piece)}]
     tool_calls: list[dict] = []
 
     for _ in range(MAX_ITERATIONS):
@@ -182,7 +192,7 @@ def run_turn(session: PatternSession, user_text: str) -> dict:
                 "tool_use_id": block.id,
                 "content": [
                     {"type": "text", "text": json.dumps(payload)},
-                    _state_block(session),
+                    _state_block(session, piece),
                 ],
                 "is_error": not op.ok,
             })

@@ -164,6 +164,7 @@ def _parse_piece(piece_el: ET.Element) -> Piece:
             piece.nodes.append(PieceNode(
                 object_id=int(oid) if oid.isdigit() else 0,
                 node_type=node.get("type", ""),
+                reverse=node.get("reverse", "0") == "1",
             ))
     ipaths = piece_el.find("iPaths")
     if ipaths is not None:
@@ -174,6 +175,11 @@ def _parse_piece(piece_el: ET.Element) -> Piece:
     grain = piece_el.find("grainline")
     if grain is not None and grain.get("centerAnchor", "").isdigit():
         piece.grainline_anchor = int(grain.get("centerAnchor"))
+        try:
+            piece.grainline_rotation = float(grain.get("rotation", "90"))
+            piece.grainline_length = float(grain.get("length", "0"))
+        except ValueError:
+            pass
     anchors = piece_el.find("anchors")
     if anchors is not None:
         for rec in anchors.findall("record"):
