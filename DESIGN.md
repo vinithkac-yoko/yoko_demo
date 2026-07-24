@@ -183,19 +183,28 @@ The **vertical-slice engine is complete and proven on a real production file**
 * SVG renderer produces a legible construction-and-pieces view.
 * 17 passing tests (`engine/tests/test_engine.py`).
 
+## Action set (the agent's tools = the Seamly object model)
+
+`add_point` (all supported point tool types), `add_line`, `add_curve`
+(arc / arcWithLength / elArc / spline), `add_dart` (trueDarts), `edit_object`
+(any attribute), `delete_object` (block-and-report). `operations.add_object` /
+`edit_object` assign ids, re-evaluate, and **roll back** if the result can't be
+computed or breaks the pattern — so the agent can create geometry safely.
+
+Evaluator coverage (tool types computed to geometry): `single`, `endLine`,
+`alongLine`, `normal`, `bisector`, `intersectXY`, `lineIntersect`, `height`,
+`shoulder`, `pointOfContact`, `lineIntersectAxis`, `curveIntersectAxis`,
+`cutSpline/cutArc/cutSplinePath`, `pointOfIntersectionCircles/Arcs`, `trueDarts`;
+`arc`, `arcWithLength`, `elArc`, `cubicBezier`, `cubicBezierPath`; operations
+`rotation`, `moving`, `flippingByLine`, `flippingByAxis`.
+
 ## Roadmap
 
-1. **Engine parity** — remaining point tools (`height`, `shoulder`, `triangle`,
-   arc/circle intersections, cut tools), `arcWithLength`, elliptical arcs, the
-   rotation/moving operations and curve/arc mirroring, piece seam-allowance
-   offsetting, and the `.sm2d` **writer** for round-trip.
-2. **Mutation API + validation/rollback** (`operations.py`) — the action layer
-   the agent tools call; delete = block-and-report. *(done: edit/delete)*
-3. **Agent loop** — Anthropic Messages API tool-use loop, image + compact-state
-   prompting, per-operation tools. *(done for edit/delete; expand the add_* tool
-   set as parity grows)*
-4. **Phone PWA** — mobile chat UI + live pattern view over the backend. *(done;
-   Railway-deployable)*
-5. **Real-Seamly2D oracle** — automated cross-check (open engine output in the
+1. **Remaining parity** — `triangle`, tangent-point tools, curve-curve
+   intersection, curve/arc transforms in operations, piece seam-allowance
+   offsetting, creating **new pieces** (detail outlines), and the `.sm2d`
+   **writer** for round-trip export back into Seamly2D.
+2. **Real-Seamly2D oracle** — automated cross-check (open engine output in the
    Seamly2D CLI, diff geometry) in CI.
+3. **Grading** — evaluate/export across the size range.
 ```

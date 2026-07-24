@@ -238,3 +238,64 @@ def test_render_piece_svg_draws_outline(evaluated):
     svg = render_piece_svg(pat, ev, piece, width=600)
     assert svg.startswith("<svg") and "<path" in svg  # a real outline path
     assert "Z" in svg  # closed outline
+
+
+# --- creation / mutation -----------------------------------------------------
+def _ids(sess):
+    return {o.raw.get("name"): o.id for o in sess.pattern.all_objects() if o.raw.get("name")}
+
+
+def _new_id(res):
+    return int(res.message.split("#")[1].rstrip(")"))
+
+
+def test_add_point_computes_geometry():
+    sess = _session()
+    ids = _ids(sess)
+    res = sess.add_object("point", "endLine",
+                          {"basePoint": ids["A1"], "angle": "0", "length": "3", "name": "NEW"})
+    assert res.ok, res.message
+    a1 = sess.evaluated.points[ids["A1"]]
+    new = sess.evaluated.points[_new_id(res)]
+    assert math.isclose(new.x, a1.x + 3, abs_tol=1e-6)
+    assert math.isclose(new.y, a1.y, abs_tol=1e-6)
+
+
+def test_add_dart_creates_two_points():
+    sess = _session()
+    ids = _ids(sess)
+    n0 = len(sess.evaluated.points)
+    res = sess.add_object("point", "trueDarts", {
+        "baseLineP1": ids["A1"], "baseLineP2": ids["A9"],
+        "dartP1": ids["A11"], "dartP2": ids["A13"], "dartP3": ids["A12"],
+        "name1": "DL", "name2": "DR"})
+    assert res.ok, res.message
+    assert len(sess.evaluated.points) == n0 + 2
+
+
+def test_add_invalid_rolls_back():
+    sess = _session()
+    ids = _ids(sess)
+    n0 = len(sess.evaluated.points)
+    res = sess.add_object("point", "endLine",
+                          {"basePoint": ids["A1"], "angle": "0", "length": "nope", "name": "BAD"})
+    assert res.ok is False
+    assert len(sess.evaluated.points) == n0  # nothing added
+
+
+def test_edit_object_generic():
+    sess = _session()
+    ids = _ids(sess)
+    res = sess.edit_object(ids["A1"], {"length": "6*#CM"})
+    assert res.ok
+    assert sess.pattern.object_by_id()[ids["A1"]].raw["length"] == "6*#CM"
+
+
+def test_geometry_helpers():
+    from seamly_engine import geometry as g
+    foot = g.foot_of_perpendicular(g.Point(0, -5), g.Point(-3, 0), g.Point(3, 0))
+    assert math.isclose(foot.x, 0, abs_tol=1e-9) and math.isclose(foot.y, 0, abs_tol=1e-9)
+    pts = g.circle_circle_intersections(g.Point(0, 0), 5, g.Point(6, 0), 5)
+    assert len(pts) == 2 and math.isclose(pts[0].x, 3, abs_tol=1e-9)
+    r = g.rotate_point(g.Point(1, 0), g.Point(0, 0), 90)  # visual CCW 90° → up (−y)
+    assert math.isclose(r.x, 0, abs_tol=1e-9) and math.isclose(r.y, -1, abs_tol=1e-9)

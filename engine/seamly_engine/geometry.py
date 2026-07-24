@@ -186,6 +186,51 @@ class BezierPath:
         return sum(seg.length() for seg in self.segments())
 
 
+@dataclass(frozen=True)
+class EllipticalArc:
+    center: Point
+    radius1: float  # semi-axis along the (rotated) x
+    radius2: float  # semi-axis along the (rotated) y
+    angle1: float
+    angle2: float
+    rotation: float = 0.0
+
+    def point_at(self, angle_deg: float) -> Point:
+        a = math.radians(angle_deg)
+        # ellipse point before rotation (screen convention: y down)
+        ex = self.radius1 * math.cos(a)
+        ey = -self.radius2 * math.sin(a)
+        rot = math.radians(-self.rotation)
+        rx = ex * math.cos(rot) - ey * math.sin(rot)
+        ry = ex * math.sin(rot) + ey * math.cos(rot)
+        return Point(self.center.x + rx, self.center.y + ry)
+
+    def polyline(self, steps: int = 64) -> list[Point]:
+        span = self.angle2 - self.angle1
+        return [self.point_at(self.angle1 + span * i / steps) for i in range(steps + 1)]
+
+    def length(self) -> float:
+        pts = self.polyline()
+        return sum(pts[i].dist(pts[i + 1]) for i in range(len(pts) - 1))
+
+
+def point_at_arclength(poly: list[Point], s: float) -> Point:
+    """Point at arc length ``s`` along a polyline (used by the cut tools)."""
+    if not poly:
+        raise ValueError("empty polyline")
+    if s <= 0:
+        return poly[0]
+    acc = 0.0
+    for i in range(len(poly) - 1):
+        seg = poly[i].dist(poly[i + 1])
+        if acc + seg >= s:
+            t = (s - acc) / seg if seg else 0.0
+            return Point(poly[i].x + t * (poly[i + 1].x - poly[i].x),
+                         poly[i].y + t * (poly[i + 1].y - poly[i].y))
+        acc += seg
+    return poly[-1]
+
+
 def polyline_axis_intersection(poly: list[Point], base: Point, angle_deg: float) -> Point | None:
     """First intersection of a polyline with the infinite axis through ``base``
     at ``angle_deg`` (used by curveIntersectAxis). Returns the intersection
@@ -201,6 +246,41 @@ def polyline_axis_intersection(poly: list[Point], base: Point, angle_deg: float)
             if d < best_d:
                 best, best_d = hit, d
     return best
+
+
+def foot_of_perpendicular(p: Point, a: Point, b: Point) -> Point:
+    """Foot of the perpendicular from ``p`` onto the infinite line a-b (the
+    'height' tool)."""
+    dx, dy = b.x - a.x, b.y - a.y
+    denom = dx * dx + dy * dy
+    if denom == 0:
+        return a
+    t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / denom
+    return Point(a.x + t * dx, a.y + t * dy)
+
+
+def circle_circle_intersections(c1: Point, r1: float, c2: Point, r2: float) -> list[Point]:
+    d = c1.dist(c2)
+    if d == 0 or d > r1 + r2 or d < abs(r1 - r2):
+        return []
+    a = (r1 * r1 - r2 * r2 + d * d) / (2 * d)
+    h2 = r1 * r1 - a * a
+    h = math.sqrt(h2) if h2 > 0 else 0.0
+    xm = c1.x + a * (c2.x - c1.x) / d
+    ym = c1.y + a * (c2.y - c1.y) / d
+    rx = -(c2.y - c1.y) * (h / d)
+    ry = (c2.x - c1.x) * (h / d)
+    if h == 0:
+        return [Point(xm, ym)]
+    return [Point(xm + rx, ym + ry), Point(xm - rx, ym - ry)]
+
+
+def rotate_point(p: Point, center: Point, angle_deg: float) -> Point:
+    """Rotate ``p`` about ``center`` by ``angle_deg`` (visual CCW, screen coords)."""
+    r = center.dist(p)
+    if r == 0:
+        return p
+    return from_polar(center, line_angle(center, p) + angle_deg, r)
 
 
 def reflect_point(p: Point, a: Point, b: Point) -> Point:

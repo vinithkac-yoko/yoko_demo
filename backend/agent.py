@@ -42,45 +42,141 @@ resolved numeric value). Point objects include resolved `xy` coordinates (cm).
 2. When present, a rendered image: bold strokes are final piece outlines, dimmed \
 strokes are construction geometry, darts are magenta, drill holes teal.
 
-To make an edit, call the operation tools. Guidance:
+You can do anything the Seamly object model allows, via the tools:
+- ADD geometry: `add_point` (any point tool_type — its schema lists the attrs \
+each needs), `add_line`, `add_curve` (arc / arcWithLength / elArc / spline), \
+`add_dart` (a true dart). Reference existing objects by their integer id from \
+the state; give new points a `name`.
+- EDIT: `edit_object` changes any attribute(s) of an object (a length, angle, \
+radius, or a reference point).
+- DELETE: `delete_object` — block-and-report; if it has dependents the delete is \
+refused and returns the dependent chain (delete those first, or pick another way).
+
+Guidance:
 - Formulas are Seamly expressions. Measurements (e.g. `waist_circ`) and variables \
 (e.g. `#CM`, the cm-scale factor) can be referenced directly. To "let out the \
-waist 2cm", find the object whose length formula controls that dimension and add \
-to it (e.g. `(waist_circ/4)+4*#CM` becomes `(waist_circ/4)+4*#CM+2`).
-- Prefer editing the construction object that drives a dimension over a leaf.
-- DELETE is block-and-report: if an object has dependents the delete is refused \
-and returns the dependent chain. Delete those first or pick another edit.
-- Every edit auto-re-evaluates and rolls back if it makes the pattern invalid.
+waist 2cm", edit the object whose length drives that dimension (e.g. \
+`(waist_circ/4)+4*#CM` → `(waist_circ/4)+4*#CM+2`).
+- To build new structure, add construction points first, then lines/curves/darts \
+between them. Prefer editing the construction object that drives a dimension.
+- Every add/edit auto-re-evaluates and rolls back if the result is invalid; the \
+tool result says whether it failed and why, plus the fresh state.
 
-Work step by step. After making the change(s), briefly explain what you did and \
-why in plain language. Keep it concise."""
+Work step by step. After the change(s), briefly explain what you did in plain \
+language. Keep it concise."""
 
-# --- tool schemas: one per operation (grows toward full parity) --------------
+# --- tool schemas: the full Seamly object model (add / edit / delete) --------
+# Attribute values are Seamly expressions or object-id strings; ids reference
+# objects by their integer id as shown in the state.
+_ATTRS = {"type": "object", "additionalProperties": {"type": "string"},
+          "description": "Seamly attributes as strings (formulas or object ids)"}
+
+POINT_TYPES = [
+    "single", "endLine", "alongLine", "normal", "bisector", "intersectXY",
+    "lineIntersect", "height", "shoulder", "pointOfContact",
+    "lineIntersectAxis", "curveIntersectAxis",
+    "cutSpline", "cutArc", "cutSplinePath",
+    "pointOfIntersectionCircles", "pointOfIntersectionArcs",
+]
+
 TOOLS: list[dict[str, Any]] = [
     {
-        "name": "edit_formula",
+        "name": "add_point",
         "description": (
-            "Change a formula attribute of an object to realize an instructed "
-            "edit. attr is 'length', 'angle', or 'radius'. new_formula is a "
-            "Seamly expression (may reference measurements like waist_circ and "
-            "variables like #CM). Auto re-evaluates; rolls back if it breaks the "
-            "pattern."
+            "Create a new point. Required attrs by tool_type: "
+            "single{x,y}; endLine{basePoint,angle,length}; "
+            "alongLine{firstPoint,secondPoint,length}; "
+            "normal{firstPoint,secondPoint,length,angle?}; "
+            "bisector{firstPoint,secondPoint,thirdPoint,length}; "
+            "intersectXY{firstPoint,secondPoint} (x from first, y from second); "
+            "lineIntersect{p1Line1,p2Line1,p1Line2,p2Line2}; "
+            "height{basePoint,p1Line,p2Line} (foot of perpendicular); "
+            "shoulder{p1Line,p2Line,pShoulder,length}; "
+            "lineIntersectAxis{basePoint,angle,p1Line,p2Line}; "
+            "curveIntersectAxis{basePoint,angle,curve}; "
+            "cutSpline|cutArc|cutSplinePath{curve,length}; "
+            "pointOfIntersectionCircles{c1Center,c2Center,c1Radius,c2Radius,crossPoint}. "
+            "Always include a 'name'. Optional: lineType,lineColor,lineWeight."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "object_id": {"type": "integer", "description": "id of the object to edit"},
-                "attr": {"type": "string", "enum": ["length", "angle", "radius"]},
-                "new_formula": {"type": "string"},
+                "tool_type": {"type": "string", "enum": POINT_TYPES},
+                "attrs": _ATTRS,
             },
-            "required": ["object_id", "attr", "new_formula"],
+            "required": ["tool_type", "attrs"],
+        },
+    },
+    {
+        "name": "add_line",
+        "description": "Draw a line between two existing points.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "firstPoint": {"type": "string"}, "secondPoint": {"type": "string"},
+                "lineType": {"type": "string"}, "lineColor": {"type": "string"},
+                "lineWeight": {"type": "string"},
+            },
+            "required": ["firstPoint", "secondPoint"],
+        },
+    },
+    {
+        "name": "add_curve",
+        "description": (
+            "Create a curve. kind: 'arc'{center,radius,angle1,angle2}, "
+            "'arcWithLength'{center,radius,angle1,length}, "
+            "'elArc'{center,radius1,radius2,angle1,angle2,rotationAngle}, "
+            "'spline'. For a spline set spline_type='cubicBezier' with "
+            "attrs{point1,point2,point3,point4}, or 'cubicBezierPath' with "
+            "path_points=[ids] (on-curve, ctrl, ctrl, on-curve, …)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["arc", "arcWithLength", "elArc", "spline"]},
+                "spline_type": {"type": "string", "enum": ["cubicBezier", "cubicBezierPath"]},
+                "attrs": _ATTRS,
+                "path_points": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["kind"],
+        },
+    },
+    {
+        "name": "add_dart",
+        "description": (
+            "Add a true dart on a base line. baseLineP1/baseLineP2 define the seam "
+            "the dart sits on; dartP1/dartP2(apex)/dartP3 are the dart points. "
+            "Produces two leg points named name1/name2."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "baseLineP1": {"type": "string"}, "baseLineP2": {"type": "string"},
+                "dartP1": {"type": "string"}, "dartP2": {"type": "string"},
+                "dartP3": {"type": "string"},
+                "name1": {"type": "string"}, "name2": {"type": "string"},
+            },
+            "required": ["baseLineP1", "baseLineP2", "dartP1", "dartP2", "dartP3"],
+        },
+    },
+    {
+        "name": "edit_object",
+        "description": (
+            "Change one or more attributes of an existing object (e.g. a length, "
+            "angle, radius, or a reference point). Auto re-evaluates; rolls back "
+            "if it makes the pattern invalid."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"object_id": {"type": "integer"}, "attrs": _ATTRS},
+            "required": ["object_id", "attrs"],
         },
     },
     {
         "name": "delete_object",
         "description": (
-            "Delete a construction object by id. Refused (block-and-report) if "
-            "other objects depend on it; the response lists the dependent ids."
+            "Delete an object by id. Refused (block-and-report) if other objects "
+            "depend on it; the response lists the dependent ids."
         ),
         "input_schema": {
             "type": "object",
@@ -88,15 +184,42 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["object_id"],
         },
     },
-    # Roadmap: add_point_endline, add_point_alongline, add_dart, add_line, ...
 ]
+
+_ARC_KIND = {"arc": ("arc", "simple"), "arcWithLength": ("arc", "arcWithLength"),
+             "elArc": ("elArc", "simple")}
 
 
 def dispatch_tool(session: PatternSession, name: str, args: dict) -> OpResult:
+    if name == "add_point":
+        return session.add_object("point", args["tool_type"], args.get("attrs", {}))
+    if name == "add_line":
+        attrs = {"firstPoint": args["firstPoint"], "secondPoint": args["secondPoint"]}
+        for k in ("lineType", "lineColor", "lineWeight"):
+            if args.get(k):
+                attrs[k] = args[k]
+        return session.add_object("line", "", attrs)
+    if name == "add_curve":
+        kind = args["kind"]
+        attrs = dict(args.get("attrs", {}))
+        if kind == "spline":
+            tag, typ = "spline", args.get("spline_type", "cubicBezier")
+        else:
+            tag, typ = _ARC_KIND[kind]
+        kids = None
+        if args.get("path_points"):
+            kids = [{"__tag__": "pathPoint", "pSpline": str(i)} for i in args["path_points"]]
+        return session.add_object(tag, typ, attrs, children=kids)
+    if name == "add_dart":
+        attrs = {k: args[k] for k in ("baseLineP1", "baseLineP2", "dartP1", "dartP2", "dartP3")}
+        for k in ("name1", "name2"):
+            if args.get(k):
+                attrs[k] = args[k]
+        return session.add_object("point", "trueDarts", attrs)
+    if name == "edit_object":
+        return session.edit_object(int(args["object_id"]), args.get("attrs", {}))
     if name == "delete_object":
         return session.delete_object(int(args["object_id"]))
-    if name == "edit_formula":
-        return session.edit_formula(int(args["object_id"]), args["attr"], args["new_formula"])
     return OpResult(False, f"unknown tool {name!r}")
 
 

@@ -22,7 +22,8 @@ from dataclasses import dataclass
 
 from .evaluator import evaluate_pattern
 from .measurements import MeasurementTable
-from .model import Evaluated, Pattern
+from .model import Evaluated, Pattern, PatternObject
+from .parser import _collect_refs
 from .state import export_state
 
 
@@ -73,6 +74,92 @@ class PatternSession:
         return sorted(seen)
 
     # --- mutation ------------------------------------------------------------
+    def _next_id(self) -> int:
+        ids = [0]
+        for o in self.pattern.all_objects():
+            ids.append(o.id)
+            for a in ("point1", "point2"):
+                v = o.raw.get(a, "")
+                if v.isdigit():
+                    ids.append(int(v))
+            for ch in o.children:
+                d = ch.get("dst", "")
+                if d.isdigit():
+                    ids.append(int(d))
+        for db in self.pattern.draft_blocks:
+            for m in db.modeling:
+                ids += [m.id, m.id_object]
+            for ip in db.internal_paths:
+                ids.append(ip.id)
+        for pc in self.pattern.pieces:
+            ids.append(pc.id)
+        return max(ids) + 1
+
+    def add_object(self, tag: str, tool_type: str, attrs: dict,
+                   children: list[dict] | None = None, block_index: int = 0) -> OpResult:
+        """Add a new construction object (any Seamly tool type). Assigns a fresh
+        id, re-evaluates, and rolls back if the object can't be computed or breaks
+        the pattern. ``trueDarts`` automatically reserves two output-point ids."""
+        if not self.pattern.draft_blocks:
+            return OpResult(False, "no draft block to add to")
+        new_id = self._next_id()
+        raw = {k: str(v) for k, v in (attrs or {}).items()}
+        raw["id"] = str(new_id)
+        if tool_type:
+            raw["type"] = tool_type
+        kids = [dict(c) for c in (children or [])]
+        if tool_type == "trueDarts":
+            raw.setdefault("point1", str(new_id + 1))
+            raw.setdefault("point2", str(new_id + 2))
+        obj = PatternObject(id=new_id, tag=tag, tool_type=tool_type, raw=raw, children=kids)
+        obj.refs = _collect_refs(raw, kids)
+
+        before = set(self.evaluated.unresolved)
+        snapshot = copy.deepcopy(self.pattern)
+        self.pattern.draft_blocks[block_index].objects.append(obj)
+        new_ev = self._evaluate()
+        newly = set(new_ev.unresolved) - before
+
+        makes_geometry = tag in ("point", "arc", "elArc", "spline")
+        resolved_self = (
+            (not makes_geometry)
+            or new_id in new_ev.points
+            or new_id in new_ev.curves
+            or (tool_type == "trueDarts" and int(raw["point1"]) in new_ev.points)
+        )
+        if newly or not resolved_self:
+            self.pattern = snapshot
+            reason = new_ev.unresolved.get(new_id, "it broke dependent objects")
+            return OpResult(False, f"could not add {tool_type or tag} #{new_id}: {reason}",
+                            blocked_by=sorted(newly))
+        self.evaluated = new_ev
+        nm = raw.get("name", "")
+        return OpResult(True, f"added {tool_type or tag} {nm} (#{new_id})".replace("  ", " "))
+
+    def edit_object(self, object_id: int, attrs: dict) -> OpResult:
+        """Set one or more attributes of an object (generalizes edit_formula).
+        Re-evaluates and rolls back if it breaks previously-valid objects."""
+        obj = self.pattern.object_by_id().get(object_id)
+        if obj is None:
+            return OpResult(False, f"no object with id {object_id}")
+        before = set(self.evaluated.unresolved)
+        snapshot = copy.deepcopy(self.pattern)
+        for k, v in attrs.items():
+            obj.raw[k] = str(v)
+        obj.refs = _collect_refs(obj.raw, obj.children)
+        new_ev = self._evaluate()
+        newly = set(new_ev.unresolved) - before
+        if newly:
+            self.pattern = snapshot
+            return OpResult(
+                False,
+                f"edit rolled back: it left {len(newly)} object(s) unresolvable "
+                f"({self._names(sorted(newly))}).",
+                blocked_by=sorted(newly),
+            )
+        self.evaluated = new_ev
+        return OpResult(True, f"updated {self._name(object_id)}: {attrs}")
+
     def delete_object(self, object_id: int) -> OpResult:
         """Delete an object. Refused (block + report) if anything depends on it."""
         obj = self.pattern.object_by_id().get(object_id)

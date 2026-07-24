@@ -26,6 +26,9 @@ _REF_ATTRS = (
     "center", "curve", "p1Line", "p2Line",
     "baseLineP1", "baseLineP2", "dartP1", "dartP2", "dartP3",
     "point1", "point2", "point3", "point4",
+    # additional-tool references
+    "p1Line1", "p2Line1", "p1Line2", "p2Line2", "pShoulder",
+    "c1Center", "c2Center", "firstArc", "secondArc", "axisP1", "axisP2",
 )
 
 

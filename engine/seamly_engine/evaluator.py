@@ -21,6 +21,8 @@ disambiguated against the set of known names.
 
 from __future__ import annotations
 
+import math
+
 from . import geometry as geo
 from .formula import FormulaError, Scope, evaluate, identifiers
 from .measurements import MeasurementTable
@@ -115,10 +117,12 @@ def _eval_object(obj: PatternObject, objs: dict[int, PatternObject],
         _require_points(obj, ev, ["firstPoint", "secondPoint"])  # nothing to store
     elif tag == "arc":
         _eval_arc(obj, meas, ev, id_of_name)
+    elif tag == "elArc":
+        _eval_elarc(obj, meas, ev, id_of_name)
     elif tag == "spline":
         _eval_spline(obj, ev)
     elif tag == "operation":
-        _eval_operation(obj, ev)
+        _eval_operation(obj, ev, meas, id_of_name)
     # unknown tags are simply ignored (not construction geometry)
 
 
@@ -327,6 +331,52 @@ def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
         ev.points[int(obj.raw["point2"])] = q2
         return
 
+    elif t == "lineIntersect":
+        hit = geo.line_intersection(ref("p1Line1"), ref("p2Line1"),
+                                    ref("p1Line2"), ref("p2Line2"))
+        if hit is None:
+            raise _Unresolved("lines parallel")
+        p = hit
+
+    elif t == "height":
+        p = geo.foot_of_perpendicular(ref("basePoint"), ref("p1Line"), ref("p2Line"))
+
+    elif t == "shoulder":
+        a, b, sh = ref("p1Line"), ref("p2Line"), ref("pShoulder")
+        length = evaluate(obj.raw["length"], scope(a.dist(b)))
+        pts = geo.circle_line_intersections(sh, length, a, b)
+        if not pts:
+            raise _Unresolved("shoulder circle misses line")
+        p = max(pts, key=lambda q: q.dist(a))
+        ev.values[obj.id] = {"length": length}
+
+    elif t in ("cutSpline", "cutArc", "cutSplinePath"):
+        curve = ev.curves.get(int(obj.raw["curve"]))
+        if curve is None:
+            raise _Unresolved("curve not resolved")
+        length = evaluate(obj.raw["length"], scope())
+        p = geo.point_at_arclength(curve.polyline(96), length)
+        ev.values[obj.id] = {"length": length}
+
+    elif t == "pointOfIntersectionCircles":
+        c1, c2 = ref("c1Center"), ref("c2Center")
+        r1 = evaluate(obj.raw["c1Radius"], scope())
+        r2 = evaluate(obj.raw["c2Radius"], scope())
+        pts = geo.circle_circle_intersections(c1, r1, c2, r2)
+        if not pts:
+            raise _Unresolved("circles do not intersect")
+        p = pts[0] if obj.raw.get("crossPoint", "1") == "1" else pts[min(1, len(pts) - 1)]
+
+    elif t == "pointOfIntersectionArcs":
+        a1 = ev.curves.get(int(obj.raw["firstArc"]))
+        a2 = ev.curves.get(int(obj.raw["secondArc"]))
+        if not (isinstance(a1, geo.Arc) and isinstance(a2, geo.Arc)):
+            raise _Unresolved("arcs not resolved")
+        pts = geo.circle_circle_intersections(a1.center, a1.radius, a2.center, a2.radius)
+        if not pts:
+            raise _Unresolved("arcs do not intersect")
+        p = pts[0] if obj.raw.get("crossPoint", "1") == "1" else pts[min(1, len(pts) - 1)]
+
     else:
         raise _Unresolved(f"point tool {t!r} not implemented")
 
@@ -336,13 +386,29 @@ def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
 def _eval_arc(obj: PatternObject, meas: dict[str, float], ev: Evaluated,
               id_of_name: dict[str, int]) -> None:
     scope = _scope_for(obj, ev, meas, id_of_name, None)
-    center_id = int(obj.raw["center"])
-    center = _point(ev, center_id)
+    center = _point(ev, int(obj.raw["center"]))
     radius = evaluate(obj.raw["radius"], scope)
     a1 = evaluate(obj.raw.get("angle1", "0"), scope)
-    a2 = evaluate(obj.raw.get("angle2", "0"), scope)
+    if obj.tool_type == "arcWithLength" or "length" in obj.raw:
+        length = evaluate(obj.raw["length"], scope)
+        a2 = a1 + (math.degrees(length / radius) if radius else 0.0)
+    else:
+        a2 = evaluate(obj.raw.get("angle2", "0"), scope)
     ev.curves[obj.id] = geo.Arc(center, radius, a1, a2)
     ev.values[obj.id] = {"radius": radius, "angle1": a1, "angle2": a2}
+
+
+def _eval_elarc(obj: PatternObject, meas: dict[str, float], ev: Evaluated,
+                id_of_name: dict[str, int]) -> None:
+    scope = _scope_for(obj, ev, meas, id_of_name, None)
+    center = _point(ev, int(obj.raw["center"]))
+    r1 = evaluate(obj.raw["radius1"], scope)
+    r2 = evaluate(obj.raw["radius2"], scope)
+    a1 = evaluate(obj.raw.get("angle1", "0"), scope)
+    a2 = evaluate(obj.raw.get("angle2", "0"), scope)
+    rot = evaluate(obj.raw.get("rotationAngle", "0"), scope)
+    ev.curves[obj.id] = geo.EllipticalArc(center, r1, r2, a1, a2, rot)
+    ev.values[obj.id] = {"radius1": r1, "radius2": r2}
 
 
 def _eval_spline(obj: PatternObject, ev: Evaluated) -> None:
@@ -361,26 +427,37 @@ def _eval_spline(obj: PatternObject, ev: Evaluated) -> None:
         raise _Unresolved(f"spline tool {t!r} not implemented")
 
 
-def _eval_operation(obj: PatternObject, ev: Evaluated) -> None:
-    """Apply an operation tool, producing destination objects from sources.
-
-    Currently mirrors *points* (flippingByLine / flippingByAxis). Rotation and
-    moving, and mirroring of curves/arcs, are on the parity roadmap; unsupported
-    sources are left unresolved rather than producing wrong geometry."""
+def _eval_operation(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
+                    id_of_name: dict[str, int]) -> None:
+    """Apply an operation tool, producing destination points from sources:
+    rotation, moving (translate), flippingByLine / flippingByAxis (mirror).
+    Point sources are transformed; curve/arc sources are on the roadmap."""
     t = obj.tool_type
-    if t in ("flippingByLine", "flippingByAxis"):
-        p1 = ev.points.get(int(obj.raw["p1Line"]))
-        p2 = ev.points.get(int(obj.raw["p2Line"]))
-        if p1 is None or p2 is None:
-            raise _Unresolved("mirror axis endpoints unresolved")
-        for pair in obj.children:
-            src, dst = pair.get("src", ""), pair.get("dst", "")
-            if not (src.isdigit() and dst.isdigit()):
-                continue
-            src_pt = ev.points.get(int(src))
-            if src_pt is not None:
-                ev.points[int(dst)] = geo.reflect_point(src_pt, p1, p2)
-            else:
-                ev.unresolved[int(dst)] = f"operation source {src} not a resolved point"
-    else:
+    scope = _scope_for(obj, ev, meas, id_of_name, None)
+
+    def transform(pt: geo.Point) -> geo.Point:
+        if t == "rotation":
+            center = _point(ev, int(obj.raw["center"]))
+            return geo.rotate_point(pt, center, evaluate(obj.raw["angle"], scope))
+        if t == "moving":
+            return geo.from_polar(pt, evaluate(obj.raw["angle"], scope),
+                                  evaluate(obj.raw["length"], scope))
+        if t == "flippingByLine":
+            return geo.reflect_point(pt, _point(ev, int(obj.raw["p1Line"])),
+                                     _point(ev, int(obj.raw["p2Line"])))
+        if t == "flippingByAxis":
+            c = _point(ev, int(obj.raw["center"]))
+            if obj.raw.get("axisType", "vertical").lower().startswith("v"):
+                return geo.Point(2 * c.x - pt.x, pt.y)      # mirror across vertical axis
+            return geo.Point(pt.x, 2 * c.y - pt.y)          # mirror across horizontal axis
         raise _Unresolved(f"operation {t!r} not implemented")
+
+    for pair in obj.children:
+        src, dst = pair.get("src", ""), pair.get("dst", "")
+        if not (src.isdigit() and dst.isdigit()):
+            continue
+        src_pt = ev.points.get(int(src))
+        if src_pt is not None:
+            ev.points[int(dst)] = transform(src_pt)
+        else:
+            ev.unresolved[int(dst)] = f"operation source {src} not a resolved point"
