@@ -43,6 +43,7 @@ class PatternSession:
         self.measurements = measurements
         self.size = size
         self.height = height
+        self.added_ids: set[int] = set()  # objects created this session (for rendering)
         self.evaluated: Evaluated = self._evaluate()
 
     def _evaluate(self) -> Evaluated:
@@ -133,6 +134,9 @@ class PatternSession:
             return OpResult(False, f"could not add {tool_type or tag} #{new_id}: {reason}",
                             blocked_by=sorted(newly))
         self.evaluated = new_ev
+        self.added_ids.add(new_id)
+        if tool_type == "trueDarts":
+            self.added_ids.update({int(raw["point1"]), int(raw["point2"])})
         nm = raw.get("name", "")
         return OpResult(True, f"added {tool_type or tag} {nm} (#{new_id})".replace("  ", " "))
 

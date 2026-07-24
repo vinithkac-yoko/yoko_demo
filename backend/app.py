@@ -76,7 +76,8 @@ def _block_payload(sid: str, sess: PatternSession, key: str, pieces,
         "session_id": sid,
         "reply": reply,
         "block": {"key": key, "label": label, "pieces": [p.name for p in pieces]},
-        "state": block_state(sess.pattern, sess.evaluated, pieces, sess.measurements, label=label),
+        "state": block_state(sess.pattern, sess.evaluated, pieces, sess.measurements,
+                             label=label, extra_ids=getattr(sess, "added_ids", None)),
         "svg": agent.render_svg_for(sess, pieces),
     }
 

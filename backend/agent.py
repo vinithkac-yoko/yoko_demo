@@ -62,6 +62,11 @@ between them. Prefer editing the construction object that drives a dimension.
 - Every add/edit auto-re-evaluates and rolls back if the result is invalid; the \
 tool result says whether it failed and why, plus the fresh state.
 
+IMPORTANT: only a successful tool call changes the pattern. Never say you \
+changed something unless you actually called a tool and it returned ok. If the \
+request is a change, you must call a tool; if you can't identify which object to \
+edit from the state, say so and ask rather than pretending.
+
 Work step by step. After the change(s), briefly explain what you did in plain \
 language. Keep it concise."""
 
@@ -228,8 +233,11 @@ def render_svg_for(session: PatternSession, pieces=None) -> str:
     the whole pattern if no block is selected."""
     plist = list(pieces) if pieces else None
     ids = scoped_ids(session.pattern, plist) if plist else None
+    added = getattr(session, "added_ids", None) or set()
+    if ids is not None and added:
+        ids = ids | added  # keep newly-created geometry visible
     return render_svg(session.pattern, session.evaluated, width=1000,
-                      object_ids=ids, pieces=plist)
+                      object_ids=ids, pieces=plist, highlight_ids=added)
 
 
 def _render_png(session: PatternSession, pieces=None) -> bytes | None:
@@ -249,7 +257,8 @@ def _render_png(session: PatternSession, pieces=None) -> bytes | None:
 def _state_block(session: PatternSession, pieces=None, label: str = "") -> dict:
     if pieces:
         state = block_state(session.pattern, session.evaluated, list(pieces),
-                            session.measurements, label=label)
+                            session.measurements, label=label,
+                            extra_ids=getattr(session, "added_ids", None))
     else:
         state = compact_state(session.pattern, session.evaluated, session.measurements)
     return {"type": "text", "text": "BLOCK STATE (JSON):\n" + json.dumps(state)}

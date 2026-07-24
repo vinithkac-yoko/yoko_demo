@@ -30,13 +30,17 @@ _STYLE = {
 
 def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
                labels: bool = True, padding: float = 4.0,
-               object_ids: set[int] | None = None, pieces=None) -> str:
+               object_ids: set[int] | None = None, pieces=None,
+               highlight_ids: set[int] | None = None) -> str:
     """Rich construction view: all lines/points/curves, construction dimmed,
     final-outline bold, final points labeled. Pass ``object_ids`` to draw only a
     subset (e.g. one block's objects + their construction drivers). Pass
     ``pieces`` to also overlay those pieces' connected seam outlines and internal
-    paths (darts/grainline) bold on top — this fills in the straight seam
-    segments that aren't standalone line objects."""
+    paths (darts/grainline) bold on top. Pass ``highlight_ids`` to draw those
+    objects in a distinct accent (e.g. geometry the agent just created)."""
+    hl = highlight_ids or set()
+    _HL = "#2563eb"  # accent for just-created geometry
+
     def inc(oid: int) -> bool:
         return object_ids is None or oid in object_ids
 
@@ -82,6 +86,8 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
         color, w, dash = _STYLE.get(role, _STYLE["curve"])
         if final_of.get(oid):
             w = max(w, 2.0)
+        if oid in hl:
+            color, w, dash = _HL, max(w, 2.2), None
         poly = curve.polyline()
         d = "M " + " L ".join(f"{sx(p.x):.1f},{sy(p.y):.1f}" for p in poly)
         da = f' stroke-dasharray="{dash}"' if dash else ""
@@ -99,6 +105,8 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
         color, w, dash = _STYLE.get(role, _STYLE["construction_line"])
         if final_of.get(o.id):
             color, w = "#111", max(w, 2.0)
+        if o.id in hl:
+            color, w, dash = _HL, max(w, 2.2), None
         da = f' stroke-dasharray="{dash}"' if dash else ""
         parts.append(
             f'<line x1="{sx(p1.x):.1f}" y1="{sy(p1.y):.1f}" x2="{sx(p2.x):.1f}" '
@@ -129,6 +137,14 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
     # points + labels
     for oid, p in ev.points.items():
         if not inc(oid):
+            continue
+        if oid in hl:  # just-created geometry — always drawn prominently + labeled
+            nm = by_id.get(oid)
+            name = (nm.raw.get("name", "") if nm else "") or f"#{oid}"
+            parts.append(f'<circle cx="{sx(p.x):.1f}" cy="{sy(p.y):.1f}" r="3.2" fill="{_HL}"/>')
+            if labels:
+                parts.append(f'<text x="{sx(p.x)+3:.1f}" y="{sy(p.y)-3:.1f}" font-size="8" '
+                             f'fill="{_HL}">{name}</text>')
             continue
         role = role_of.get(oid, "construction")
         is_final = final_of.get(oid)

@@ -154,12 +154,16 @@ def list_blocks(pattern: Pattern) -> list[dict]:
 
 
 def block_state(pattern: Pattern, ev: Evaluated, target_pieces,
-                measurements: MeasurementTable | None = None, *, label: str = "") -> dict:
+                measurements: MeasurementTable | None = None, *, label: str = "",
+                extra_ids: set[int] | None = None) -> dict:
     """Compact state scoped to a block (one or more pieces): their real objects
     plus the construction geometry that drives them. Much smaller than the whole
-    pattern and focuses the agent on one block."""
+    pattern and focuses the agent on one block. ``extra_ids`` (e.g. objects the
+    agent just created) are always included so new geometry is visible."""
     from .pieces import scoped_ids
     relevant = scoped_ids(pattern, list(target_pieces))
+    if extra_ids:
+        relevant = relevant | set(extra_ids)
     full = compact_state(pattern, ev, measurements)
     scoped = [o for o in full["objects"] if o["id"] in relevant]
     return {
