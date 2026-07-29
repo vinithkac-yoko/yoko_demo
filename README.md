@@ -81,8 +81,19 @@ The repo is Railway-ready (Nixpacks). Push it to a Railway service:
 - `nixpacks.toml` installs `cairo` so the pattern rasterizes for the vision input.
   If cairo is ever unavailable the agent falls back to state-only reasoning, so
   the app still runs.
-- Set the `ANTHROPIC_API_KEY` variable in the Railway service. Optional:
-  `VLA_MODEL` (defaults to `claude-opus-4-8`).
+- Set the `ANTHROPIC_API_KEY` variable in the Railway service.
+
+### Cost controls (Railway variables)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VLA_MODEL` | `claude-haiku-4-5` | Cheapest capable model ($1/$5 per 1M). Use `claude-sonnet-5` ($3/$15) or `claude-opus-4-8` ($5/$25) for more capability. |
+| `VLA_VISION_WIDTH` | `700` | Width of the PNG sent to the model. Image tokens scale with pixel area — lower is cheaper. |
+| `VLA_SEND_IMAGE` | `1` | Set to `0` to run **state-only** (no image at all) for the cheapest turns; the structured state is the primary input regardless. |
+| `VLA_MAX_STEPS` | `8` | Max tool-call rounds per turn — caps the worst-case cost of one message. |
+
+Per-turn payload is also kept small by sending only the *changed objects* after
+each tool call rather than the whole block state.
 
 The PWA is served at `/` and talks to the same origin, so no separate frontend
 deploy is needed.

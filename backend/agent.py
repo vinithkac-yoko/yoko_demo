@@ -28,8 +28,18 @@ from seamly_engine.pieces import scoped_ids
 from seamly_engine.render import render_svg
 from seamly_engine.state import block_state, compact_state
 
-MODEL = os.getenv("VLA_MODEL", "claude-opus-4-8")
-MAX_ITERATIONS = 12
+# Cheapest capable default. Override with the VLA_MODEL env var (e.g.
+# claude-sonnet-5 for more capability, claude-opus-4-8 for the most).
+MODEL = os.getenv("VLA_MODEL", "claude-haiku-4-5")
+MAX_ITERATIONS = int(os.getenv("VLA_MAX_STEPS", "8"))
+# Width of the PNG sent to the model. Image tokens scale with pixel area, so this
+# is a direct cost lever; the structured state is the primary input regardless.
+VISION_WIDTH = int(os.getenv("VLA_VISION_WIDTH", "700"))
+SEND_IMAGE = os.getenv("VLA_SEND_IMAGE", "1") != "0"
+
+# Models that accept adaptive thinking. Older/cheaper models (e.g. Haiku 4.5)
+# reject it, so we simply omit the parameter for them.
+_ADAPTIVE_THINKING = ("opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6", "sonnet-5", "fable")
 
 SYSTEM_PROMPT = """\
 You are a VLA (vision-language-action) agent that edits sewing patterns in a \
@@ -260,15 +270,29 @@ def render_svg_for(session: PatternSession, pieces=None) -> str:
 def _render_png(session: PatternSession, pieces=None) -> bytes | None:
     """Rasterize the block to PNG for the vision input. Returns None if no raster
     backend is installed — the agent then runs state-only (by design)."""
+    if not SEND_IMAGE:
+        return None
     try:
         import cairosvg  # optional; needs libcairo at runtime
     except Exception:
         return None
     try:
         return cairosvg.svg2png(bytestring=render_svg_for(session, pieces).encode(),
-                                output_width=1000)
+                                output_width=VISION_WIDTH)
     except Exception:
         return None
+
+
+def _state_delta(session: PatternSession, pieces, label: str, ids: set[int]) -> dict:
+    """Just the objects touched by a tool call, instead of resending the whole
+    block state after every action (a large per-turn cost)."""
+    state = block_state(session.pattern, session.evaluated, list(pieces or []),
+                        session.measurements, label=label,
+                        extra_ids=getattr(session, "added_ids", None))
+    touched = [o for o in state["objects"] if o["id"] in ids]
+    return {"type": "text",
+            "text": "CHANGED OBJECTS:\n" + json.dumps(touched) if touched
+                    else "No object changes."}
 
 
 def _state_block(session: PatternSession, pieces=None, label: str = "") -> dict:
@@ -319,10 +343,12 @@ def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = 
 
 
 def _create(client, messages: list[dict]):
-    """One model call. Falls back to no-thinking if the deployed SDK/model
-    rejects adaptive thinking, so a parameter mismatch can't break the app."""
-    kwargs = dict(model=MODEL, max_tokens=16000, system=SYSTEM_PROMPT,
+    """One model call. Adaptive thinking is only sent to models that support it;
+    if a model rejects it anyway we retry without it rather than failing."""
+    kwargs = dict(model=MODEL, max_tokens=8000, system=SYSTEM_PROMPT,
                   tools=TOOLS, messages=messages)
+    if not any(m in MODEL for m in _ADAPTIVE_THINKING):
+        return client.messages.create(**kwargs)
     try:
         return client.messages.create(thinking={"type": "adaptive"}, **kwargs)
     except Exception as e:  # noqa: BLE001
@@ -354,19 +380,25 @@ def _run_turn(session: PatternSession, user_text: str, pieces=None, label: str =
         for block in response.content:
             if block.type != "tool_use":
                 continue
+            before_added = set(getattr(session, "added_ids", set()))
             op = dispatch_tool(session, block.name, block.input)
             tool_calls.append({"tool": block.name, "input": block.input, "ok": op.ok,
                                "message": op.message})
-            # Feed the outcome AND the refreshed state back to the model.
+            # Feed back the outcome plus ONLY the objects it touched (resending
+            # the whole block state every step is a large, avoidable cost).
             payload = {"ok": op.ok, "message": op.message}
             if op.blocked_by:
                 payload["blocked_by"] = op.blocked_by
+            touched = set(getattr(session, "added_ids", set())) - before_added
+            oid = block.input.get("object_id")
+            if isinstance(oid, int):
+                touched.add(oid)
             results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
                 "content": [
                     {"type": "text", "text": json.dumps(payload)},
-                    _state_block(session, pieces, label),
+                    _state_delta(session, pieces, label, touched),
                 ],
                 "is_error": not op.ok,
             })
