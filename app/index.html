@@ -6,47 +6,64 @@
 <meta name="theme-color" content="#111111" />
 <title>Pattern VLA</title>
 <style>
-  :root { --bg:#fbfbfb; --panel:#fff; --line:#e6e6e6; --ink:#111; --muted:#777; --accent:#c026d3; }
+  :root {
+    --bg:#fbfbfb; --panel:#fff; --line:#e6e6e6; --ink:#111; --muted:#777;
+    --accent:#c026d3; --added:#2563eb;
+    --chat-h: 42vh;              /* resizable: set by the divider drag */
+  }
   * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; font-family:-apple-system,system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  html, body { margin:0; height:100%; font-family:-apple-system,system-ui,sans-serif;
+               background:var(--bg); color:var(--ink); overscroll-behavior:none; }
   #app { display:flex; flex-direction:column; height:100dvh; }
+
   header { padding:8px 12px; border-bottom:1px solid var(--line); font-weight:600; font-size:14px;
            display:flex; align-items:center; gap:10px; flex:0 0 auto; }
   header .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); flex:none; }
   header .title { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   header .sub { color:var(--muted); font-weight:400; }
-  #back { display:none; border:1px solid var(--line); background:#f4f4f6; color:var(--ink);
-          border-radius:14px; padding:4px 10px; font-size:13px; font-weight:600; }
+  .hbtn { border:1px solid var(--line); background:#f4f4f6; color:var(--ink);
+          border-radius:14px; padding:5px 11px; font-size:13px; font-weight:600; }
+  #back { display:none; }
 
-  /* pattern takes all remaining space; svg is contained so the whole block shows */
+  /* pattern pane — takes whatever the chat doesn't */
   #view { flex:1 1 auto; min-height:0; overflow:auto; display:flex; align-items:center;
           justify-content:center; padding:6px; background:#fff; }
   #view.scroll { align-items:flex-start; }
   #view svg { max-width:100%; max-height:100%; width:auto; height:auto; display:block; }
   #view .empty { color:var(--muted); font-size:14px; text-align:center; padding:24px; }
 
+  /* draggable divider */
+  #divider { flex:0 0 auto; height:22px; background:var(--panel); border-top:1px solid var(--line);
+             display:flex; align-items:center; justify-content:center; cursor:row-resize;
+             touch-action:none; user-select:none; -webkit-user-select:none; }
+  #divider:active, #divider.dragging { background:#eef1f6; }
+  #divider .grip { width:44px; height:5px; border-radius:3px; background:#c9ccd2; }
+
   /* block picker */
   #picker { display:none; width:100%; max-width:520px; padding:14px; }
   #picker h2 { font-size:15px; margin:4px 4px 12px; }
   .block { width:100%; text-align:left; border:1px solid var(--line); background:#fff; border-radius:14px;
-           padding:16px 16px; margin-bottom:10px; font-size:17px; font-weight:600; display:flex;
+           padding:16px; margin-bottom:10px; font-size:17px; font-weight:600; display:flex;
            justify-content:space-between; align-items:center; }
   .block small { color:var(--muted); font-weight:400; }
 
-  /* compact, collapsible chat */
-  #chat { flex:0 0 auto; display:flex; flex-direction:column; border-top:1px solid var(--line); background:var(--panel); }
-  .chattab { display:flex; align-items:center; gap:8px; padding:4px 12px; }
-  .chattab .last { flex:1; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #toggle { border:0; background:transparent; color:var(--muted); font-size:16px; padding:4px 6px; line-height:1; }
-  #log { max-height:16vh; overflow-y:auto; padding:6px 12px 4px; display:flex; flex-direction:column; gap:7px; }
-  #log.collapsed { display:none; }
-  .msg { max-width:88%; padding:7px 11px; border-radius:14px; font-size:14px; line-height:1.35; white-space:pre-wrap; }
+  /* chat / reasoning pane — height is the resizable part */
+  #chat { flex:0 0 auto; height:var(--chat-h); min-height:0; display:flex; flex-direction:column;
+          background:var(--panel); }
+  #log { flex:1 1 auto; min-height:0; overflow-y:auto; padding:8px 12px;
+         display:flex; flex-direction:column; gap:8px; }
+  .msg { max-width:88%; padding:8px 11px; border-radius:14px; font-size:14px; line-height:1.4;
+         white-space:pre-wrap; word-wrap:break-word; }
   .user { align-self:flex-end; background:var(--ink); color:#fff; border-bottom-right-radius:4px; }
   .bot  { align-self:flex-start; background:#f0f0f2; color:var(--ink); border-bottom-left-radius:4px; }
-  .note { align-self:center; background:transparent; color:var(--muted); font-size:12px; padding:1px 6px; max-width:96%; }
-  #bar { display:flex; gap:8px; padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }
-  #bar input { flex:1; padding:11px 13px; border:1px solid var(--line); border-radius:22px; font-size:16px; outline:none; }
-  #bar button { padding:0 16px; border:0; border-radius:22px; background:var(--ink); color:#fff; font-size:15px; font-weight:600; }
+  .note { align-self:center; background:transparent; color:var(--muted); font-size:12px;
+          padding:1px 6px; max-width:96%; text-align:center; }
+  #bar { flex:0 0 auto; display:flex; gap:8px; padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+         border-top:1px solid var(--line); }
+  #bar input { flex:1; padding:11px 13px; border:1px solid var(--line); border-radius:22px;
+               font-size:16px; outline:none; }
+  #bar button { padding:0 16px; border:0; border-radius:22px; background:var(--ink); color:#fff;
+                font-size:15px; font-weight:600; }
   #bar button:disabled { opacity:.5; }
 </style>
 </head>
@@ -55,17 +72,18 @@
   <header>
     <span class="dot"></span>
     <span class="title" id="title">Pattern VLA</span>
-    <button id="back">← Blocks</button>
+    <button class="hbtn" id="expand" title="Expand/collapse the reasoning panel">⇕</button>
+    <button class="hbtn" id="back">← Blocks</button>
   </header>
+
   <div id="view">
     <div id="picker"></div>
     <div class="empty" id="viewempty">Loading…</div>
   </div>
+
+  <div id="divider" title="Drag to resize"><div class="grip"></div></div>
+
   <div id="chat">
-    <div class="chattab">
-      <span class="last" id="stat"></span>
-      <button id="toggle" title="Show/hide chat">⌄</button>
-    </div>
     <div id="log"></div>
     <div id="bar">
       <input id="input" placeholder="Pick a block above to start" autocomplete="off" disabled />
@@ -77,6 +95,8 @@
 const API = location.origin;
 let sessionId = null;
 let blocks = [];
+
+const root = document.documentElement;
 const view = document.getElementById('view');
 const picker = document.getElementById('picker');
 const viewempty = document.getElementById('viewempty');
@@ -86,18 +106,64 @@ view.appendChild(svgHost);
 const log = document.getElementById('log');
 const input = document.getElementById('input');
 const send = document.getElementById('send');
-const stat = document.getElementById('stat');
 const title = document.getElementById('title');
 const back = document.getElementById('back');
-const toggle = document.getElementById('toggle');
+const expand = document.getElementById('expand');
+const divider = document.getElementById('divider');
 
+/* ---- resizable split -------------------------------------------------- */
+const MIN_CHAT = 90;              // px — keep the input reachable
+function maxChat() { return Math.max(140, window.innerHeight - 190); }  // leave room for pattern
+function setChatH(px, save = true) {
+  const h = Math.min(Math.max(px, MIN_CHAT), maxChat());
+  root.style.setProperty('--chat-h', h + 'px');
+  if (save) localStorage.setItem('chatH', String(h));
+}
+const savedH = parseInt(localStorage.getItem('chatH') || '', 10);
+setChatH(Number.isFinite(savedH) ? savedH : Math.round(window.innerHeight * 0.42), false);
+
+let dragging = false;
+function dragMove(clientY) {
+  if (!dragging) return;
+  setChatH(window.innerHeight - clientY - divider.offsetHeight / 2);
+}
+divider.addEventListener('pointerdown', e => {
+  dragging = true;
+  divider.classList.add('dragging');
+  divider.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+divider.addEventListener('pointermove', e => dragMove(e.clientY));
+divider.addEventListener('pointerup', e => {
+  dragging = false;
+  divider.classList.remove('dragging');
+  try { divider.releasePointerCapture(e.pointerId); } catch (_) {}
+});
+divider.addEventListener('pointercancel', () => { dragging = false; divider.classList.remove('dragging'); });
+// double-tap the divider to snap between compact and half
+let lastTap = 0;
+divider.addEventListener('click', () => {
+  const now = Date.now();
+  if (now - lastTap < 400) toggleExpand();
+  lastTap = now;
+});
+window.addEventListener('resize', () => setChatH(parseInt(getComputedStyle(root).getPropertyValue('--chat-h')), false));
+
+function toggleExpand() {
+  const cur = parseInt(getComputedStyle(root).getPropertyValue('--chat-h'));
+  const big = Math.round(window.innerHeight * 0.72);
+  const small = MIN_CHAT + 30;
+  setChatH(cur > (big + small) / 2 ? small : big);
+}
+expand.onclick = toggleExpand;
+
+/* ---- chat ------------------------------------------------------------- */
 function addMsg(text, who) {
   const d = document.createElement('div');
   d.className = 'msg ' + who;
   d.textContent = text;
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
-  if (who === 'bot') stat.textContent = text;   // peek of latest reply in the tab
 }
 async function api(path, body) {
   const r = await fetch(API + path, {
@@ -139,7 +205,6 @@ function showBlock(data) {
   title.innerHTML = `${data.block.label} <span class="sub">· block</span>`;
   input.disabled = send.disabled = false;
   input.placeholder = 'e.g. let out the waist 2cm';
-  input.focus();
 }
 
 async function boot() {
@@ -169,25 +234,24 @@ async function submit() {
   addMsg(text, 'user');
   input.value = '';
   input.disabled = send.disabled = true;
+  addMsg('…thinking', 'note');
+  const pending = log.lastChild;
   try {
     const data = await api(`/api/session/${sessionId}/message`, {text});
+    pending.remove();
     showBlock(data);
     (data.tool_calls || []).forEach(tc =>
       addMsg((tc.ok ? '✏️ ' : '⚠️ ') + tc.message, 'note'));
     if (!(data.tool_calls || []).length) addMsg('(no change was made)', 'note');
     if (data.reply) addMsg(data.reply, 'bot');
   } catch (e) {
+    pending.remove();
     addMsg('⚠️ request failed: ' + e, 'bot');
   } finally {
     input.disabled = send.disabled = false;
-    input.focus();
   }
 }
 
-toggle.onclick = () => {
-  log.classList.toggle('collapsed');
-  toggle.textContent = log.classList.contains('collapsed') ? '⌃' : '⌄';
-};
 back.onclick = () => showPicker(blocks);  // same session — edits persist
 send.onclick = submit;
 input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
