@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from typing import Any
+
+log = logging.getLogger("vla.agent")
 
 from seamly_engine.operations import OpResult, PatternSession
 from seamly_engine.pieces import scoped_ids
@@ -196,6 +199,18 @@ _ARC_KIND = {"arc": ("arc", "simple"), "arcWithLength": ("arc", "arcWithLength")
 
 
 def dispatch_tool(session: PatternSession, name: str, args: dict) -> OpResult:
+    """Execute one tool call. Never raises — a malformed call from the model comes
+    back as a failed OpResult so the model can correct itself."""
+    try:
+        return _dispatch(session, name, args)
+    except KeyError as e:
+        return OpResult(False, f"{name}: missing required argument {e}")
+    except Exception as e:  # noqa: BLE001 - surface any tool error to the model
+        log.exception("tool %s failed", name)
+        return OpResult(False, f"{name} failed: {type(e).__name__}: {e}")
+
+
+def _dispatch(session: PatternSession, name: str, args: dict) -> OpResult:
     if name == "add_point":
         return session.add_object("point", args["tool_type"], args.get("attrs", {}))
     if name == "add_line":
@@ -209,8 +224,10 @@ def dispatch_tool(session: PatternSession, name: str, args: dict) -> OpResult:
         attrs = dict(args.get("attrs", {}))
         if kind == "spline":
             tag, typ = "spline", args.get("spline_type", "cubicBezier")
-        else:
+        elif kind in _ARC_KIND:
             tag, typ = _ARC_KIND[kind]
+        else:
+            return OpResult(False, f"add_curve: unknown kind {kind!r}")
         kids = None
         if args.get("path_points"):
             kids = [{"__tag__": "pathPoint", "pSpline": str(i)} for i in args["path_points"]]
@@ -293,6 +310,30 @@ def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = 
             "tool_calls": [],
         }
 
+    try:
+        return _run_turn(session, user_text, pieces, label)
+    except Exception as e:  # noqa: BLE001 — never 500 the request
+        log.exception("agent turn failed")
+        return {"reply": f"⚠️ The agent hit an error: {type(e).__name__}: {e}",
+                "tool_calls": []}
+
+
+def _create(client, messages: list[dict]):
+    """One model call. Falls back to no-thinking if the deployed SDK/model
+    rejects adaptive thinking, so a parameter mismatch can't break the app."""
+    kwargs = dict(model=MODEL, max_tokens=16000, system=SYSTEM_PROMPT,
+                  tools=TOOLS, messages=messages)
+    try:
+        return client.messages.create(thinking={"type": "adaptive"}, **kwargs)
+    except Exception as e:  # noqa: BLE001
+        name = type(e).__name__
+        if "BadRequest" not in name and "TypeError" not in name:
+            raise
+        log.warning("adaptive thinking rejected (%s: %s) — retrying without it", name, e)
+        return client.messages.create(**kwargs)
+
+
+def _run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "") -> dict:
     import anthropic
 
     client = anthropic.Anthropic()
@@ -301,16 +342,11 @@ def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = 
     tool_calls: list[dict] = []
 
     for _ in range(MAX_ITERATIONS):
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=8000,
-            thinking={"type": "adaptive"},
-            system=SYSTEM_PROMPT,
-            tools=TOOLS,
-            messages=messages,
-        )
+        response = _create(client, messages)
         if response.stop_reason != "tool_use":
             text = "".join(b.text for b in response.content if b.type == "text")
+            if response.stop_reason == "max_tokens" and not text.strip():
+                text = "(ran out of output budget before replying — try a simpler request)"
             return {"reply": text.strip() or "(no response)", "tool_calls": tool_calls}
 
         messages.append({"role": "assistant", "content": response.content})
