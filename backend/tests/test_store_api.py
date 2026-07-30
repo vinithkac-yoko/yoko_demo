@@ -113,3 +113,16 @@ def test_message_persists_history(client):
     # history survives a fresh GET of the session
     again = client.get(f"/api/sessions/{sid}").json()
     assert len(again["messages"]) == len(out["messages"])
+
+
+def test_model_picker_api(client):
+    v = client.post("/api/patterns", json={"name": "D", "source": "blank"}).json()
+    sid = v["session_id"]
+    assert v["model"] == "claude-sonnet-5"                 # sensible default
+    assert {m["id"] for m in v["models"]} == {
+        "claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"}
+
+    out = client.post(f"/api/sessions/{sid}/model", json={"model": "claude-opus-4-8"}).json()
+    assert out["model"] == "claude-opus-4-8"
+    assert client.get(f"/api/sessions/{sid}").json()["model"] == "claude-opus-4-8"
+    assert client.post(f"/api/sessions/{sid}/model", json={"model": "nope"}).status_code == 400

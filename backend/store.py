@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     pattern_id  TEXT REFERENCES patterns(id),
     version_id  TEXT REFERENCES versions(id),
     title       TEXT NOT NULL DEFAULT '',
+    model       TEXT NOT NULL DEFAULT '',      -- per-session model choice
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
 );
@@ -80,7 +81,16 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive migrations so an existing database keeps working."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if "model" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''")
+        conn.commit()
 
 
 class Store:
@@ -153,14 +163,19 @@ class Store:
 
     # --- sessions ------------------------------------------------------------
     def create_session(self, pattern_id: str | None, version_id: str | None,
-                       title: str = "") -> str:
+                       title: str = "", model: str = "") -> str:
         sid = _id("ses")
         t = _now()
         self.conn.execute(
-            "INSERT INTO sessions(id,pattern_id,version_id,title,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?)", (sid, pattern_id, version_id, title, t, t))
+            "INSERT INTO sessions(id,pattern_id,version_id,title,model,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?)", (sid, pattern_id, version_id, title, model, t, t))
         self.conn.commit()
         return sid
+
+    def set_session_model(self, session_id: str, model: str) -> None:
+        self.conn.execute("UPDATE sessions SET model=?, updated_at=? WHERE id=?",
+                          (model, _now(), session_id))
+        self.conn.commit()
 
     def touch_session(self, session_id: str, version_id: str | None = None) -> None:
         if version_id:

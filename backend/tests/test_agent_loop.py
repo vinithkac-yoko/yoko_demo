@@ -55,7 +55,7 @@ def test_tool_use_loop_applies_edit(monkeypatch, session):
     pieces = pieces_for_key(session.pattern, "A")
     calls = {"n": 0}
 
-    def fake_create(client, messages):
+    def fake_create(client, messages, model=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp("tool_use", [_Block(type="tool_use", id="t1", name="add_dart", input={
@@ -76,7 +76,7 @@ def test_malformed_tool_call_does_not_raise(monkeypatch, session):
     pieces = pieces_for_key(session.pattern, "A")
     calls = {"n": 0}
 
-    def fake_create(client, messages):
+    def fake_create(client, messages, model=None):
         calls["n"] += 1
         if calls["n"] == 1:  # missing 'tool_type'
             return _Resp("tool_use", [_Block(type="tool_use", id="t1",
@@ -92,7 +92,7 @@ def test_malformed_tool_call_does_not_raise(monkeypatch, session):
 def test_api_error_returns_message_not_exception(monkeypatch, session):
     pieces = pieces_for_key(session.pattern, "A")
 
-    def boom(client, messages):
+    def boom(client, messages, model=None):
         raise RuntimeError("upstream exploded")
 
     monkeypatch.setattr(agent, "_create", boom)
@@ -104,3 +104,38 @@ def test_api_error_returns_message_not_exception(monkeypatch, session):
 def test_dispatch_unknown_curve_kind(session):
     res = agent.dispatch_tool(session, "add_curve", {"kind": "banana"})
     assert res.ok is False and "unknown kind" in res.message
+
+
+def test_model_picker_thinking_is_model_aware(monkeypatch):
+    """Adaptive thinking only goes to models that accept it (Haiku rejects it)."""
+    sent = {}
+
+    class _Msgs:
+        def create(self, **kw):
+            sent.clear()
+            sent.update(kw)
+            return _Resp("end_turn", [])
+
+    class _Client:
+        messages = _Msgs()
+
+    agent._create(_Client(), [], "claude-haiku-4-5")
+    assert "thinking" not in sent and sent["model"] == "claude-haiku-4-5"
+
+    agent._create(_Client(), [], "claude-opus-4-8")
+    assert sent["thinking"] == {"type": "adaptive"}
+
+    agent._create(_Client(), [], "claude-sonnet-5")
+    assert sent["thinking"] == {"type": "adaptive"}
+
+
+def test_run_turn_honours_requested_model(monkeypatch, session):
+    used = []
+
+    def fake_create(client, messages, model=None):
+        used.append(model)
+        return _Resp("end_turn", [_Block(type="text", text="done")])
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    agent.run_turn(session, "hello", None, "", model="claude-opus-4-8")
+    assert used == ["claude-opus-4-8"]

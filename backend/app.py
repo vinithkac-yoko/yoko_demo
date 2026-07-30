@@ -79,6 +79,10 @@ class Rename(BaseModel):
     name: str
 
 
+class SetModel(BaseModel):
+    model: str
+
+
 # --- helpers -----------------------------------------------------------------
 def _measurements(name: str):
     path = FIXTURES / name if name else None
@@ -130,6 +134,8 @@ def _view(sid: str, reply: str | None = None, tool_calls=None) -> dict:
                     "name": (store.get_pattern(pattern_id) or {}).get("name", "")
                     if pattern_id else sess.pattern.pattern_name},
         "version_id": row.get("version_id"),
+        "model": row.get("model") or agent.MODEL,
+        "models": agent.MODELS,
         "reply": reply,
         "tool_calls": tool_calls or [],
         "block": {"key": key, "label": label,
@@ -245,15 +251,28 @@ def select_block(sid: str, body: SelectBlock) -> dict:
     return _view(sid)
 
 
+@app.post("/api/sessions/{sid}/model")
+def set_model(sid: str, body: SetModel) -> dict:
+    """Switch the model for this session — cheap for tweaks, strong for drafting."""
+    if body.model not in agent.MODEL_IDS:
+        raise HTTPException(400, f"unknown model {body.model!r}")
+    store.set_session_model(sid, body.model)
+    label = next((m["label"] for m in agent.MODELS if m["id"] == body.model), body.model)
+    store.add_message(sid, "note", f"Model switched to {label}.")
+    return _view(sid)
+
+
 @app.post("/api/sessions/{sid}/message")
 def post_message(sid: str, body: Message) -> dict:
     sess = _live(sid)
+    row = store.get_session(sid) or {}
     key, pieces = _active_block(sid, sess)
     parent = body.parent_id or store.last_message_id(sid)
     user_msg = store.add_message(sid, "user", body.text, parent_id=parent)
 
     result = agent.run_turn(sess, body.text, pieces or None,
-                            label=_block_label(sess, key) if key else "")
+                            label=_block_label(sess, key) if key else "",
+                            model=row.get("model") or None)
     store.add_message(sid, "assistant", result["reply"], parent_id=user_msg,
                       tool_calls=result["tool_calls"])
     store.touch_session(sid)

@@ -96,6 +96,7 @@
     <span class="dot"></span>
     <span class="title" id="title">Pattern VLA</span>
     <select class="hbtn" id="blocksel" style="display:none"></select>
+    <select class="hbtn" id="modelsel" style="display:none" title="Model"></select>
     <button class="hbtn" id="save" style="display:none">Save</button>
     <button class="hbtn" id="dl" style="display:none" title="Download .sm2d">↓</button>
     <button class="hbtn" id="expand" style="display:none" title="Resize panels">⇕</button>
@@ -198,7 +199,7 @@ const get = path => api(path, {method: 'GET', body: undefined});
 function showLibrary(data) {
   $('library').style.display = 'block';
   $('work').style.display = 'none';
-  ['blocksel','save','dl','expand','home'].forEach(i => $(i).style.display = 'none');
+  ['blocksel','modelsel','save','dl','expand','home'].forEach(i => $(i).style.display = 'none');
   $('title').textContent = 'Pattern VLA';
 
   const pats = $('patterns');
@@ -285,6 +286,16 @@ function render(s) {
   sel.value = s.block ? s.block.key : '';
   sel.onchange = async () => render(await api(`/api/sessions/${s.session_id}/select_block`,
                                               {body: {block: sel.value}}));
+
+  // model picker — cheap for tweaks, strong for hard drafting
+  const msel = $('modelsel');
+  msel.style.display = 'inline-block';
+  msel.innerHTML = (s.models || []).map(m =>
+    `<option value="${m.id}" title="${esc(m.note)}">${esc(m.label)}</option>`).join('');
+  msel.value = s.model;
+  msel.title = (s.models || []).find(m => m.id === s.model)?.note || 'Model';
+  msel.onchange = async () => render(await api(`/api/sessions/${s.session_id}/model`,
+                                               {body: {model: msel.value}}));
 
   // pattern
   const view = $('view');

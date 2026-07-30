@@ -28,9 +28,22 @@ from seamly_engine.pieces import scoped_ids
 from seamly_engine.render import render_svg
 from seamly_engine.state import block_state, compact_state
 
-# Cheapest capable default. Override with the VLA_MODEL env var (e.g.
-# claude-sonnet-5 for more capability, claude-opus-4-8 for the most).
-MODEL = os.getenv("VLA_MODEL", "claude-haiku-4-5")
+# Models the UI offers. Sonnet is the default: it has adaptive thinking and
+# near-Opus quality on agentic/tool work at a fraction of the cost. Haiku is the
+# budget option but has no thinking, so it's markedly weaker at multi-step
+# drafting; Opus is the strongest for hard construction work.
+MODELS: list[dict[str, Any]] = [
+    {"id": "claude-sonnet-5", "label": "Sonnet 5",
+     "note": "Balanced — recommended", "thinking": True},
+    {"id": "claude-opus-4-8", "label": "Opus 4.8",
+     "note": "Strongest for hard drafting", "thinking": True},
+    {"id": "claude-haiku-4-5", "label": "Haiku 4.5",
+     "note": "Cheapest — simple edits only", "thinking": False},
+]
+MODEL_IDS = {m["id"] for m in MODELS}
+
+# Default for new sessions; override with the VLA_MODEL env var.
+MODEL = os.getenv("VLA_MODEL", "claude-sonnet-5")
 MAX_ITERATIONS = int(os.getenv("VLA_MAX_STEPS", "8"))
 # Width of the PNG sent to the model. Image tokens scale with pixel area, so this
 # is a direct cost lever; the structured state is the primary input regardless.
@@ -321,7 +334,8 @@ def _user_turn(session: PatternSession, user_text: str, pieces=None, label: str 
     return content
 
 
-def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "") -> dict:
+def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "",
+             model: str | None = None) -> dict:
     """Run one chat turn on the active block: model reasons over image+state,
     calls operation tools, returns its final text plus the tool calls it made."""
     if not os.getenv("ANTHROPIC_API_KEY"):
@@ -335,19 +349,20 @@ def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = 
         }
 
     try:
-        return _run_turn(session, user_text, pieces, label)
+        return _run_turn(session, user_text, pieces, label, model)
     except Exception as e:  # noqa: BLE001 — never 500 the request
         log.exception("agent turn failed")
         return {"reply": f"⚠️ The agent hit an error: {type(e).__name__}: {e}",
                 "tool_calls": []}
 
 
-def _create(client, messages: list[dict]):
+def _create(client, messages: list[dict], model: str | None = None):
     """One model call. Adaptive thinking is only sent to models that support it;
     if a model rejects it anyway we retry without it rather than failing."""
-    kwargs = dict(model=MODEL, max_tokens=8000, system=SYSTEM_PROMPT,
+    model = model or MODEL
+    kwargs = dict(model=model, max_tokens=8000, system=SYSTEM_PROMPT,
                   tools=TOOLS, messages=messages)
-    if not any(m in MODEL for m in _ADAPTIVE_THINKING):
+    if not any(m in model for m in _ADAPTIVE_THINKING):
         return client.messages.create(**kwargs)
     try:
         return client.messages.create(thinking={"type": "adaptive"}, **kwargs)
@@ -359,7 +374,8 @@ def _create(client, messages: list[dict]):
         return client.messages.create(**kwargs)
 
 
-def _run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "") -> dict:
+def _run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "",
+              model: str | None = None) -> dict:
     import anthropic
 
     client = anthropic.Anthropic()
@@ -368,7 +384,7 @@ def _run_turn(session: PatternSession, user_text: str, pieces=None, label: str =
     tool_calls: list[dict] = []
 
     for _ in range(MAX_ITERATIONS):
-        response = _create(client, messages)
+        response = _create(client, messages, model)
         if response.stop_reason != "tool_use":
             text = "".join(b.text for b in response.content if b.type == "text")
             if response.stop_reason == "max_tokens" and not text.strip():

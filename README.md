@@ -110,9 +110,18 @@ Without a volume the app still works, but the library resets on each redeploy.
 
 ### Cost controls (Railway variables)
 
+**Pick the model per session in the app** (header dropdown) — cheap for simple
+tweaks, strong for hard drafting. The choice is saved with the session:
+
+| Model | Cost /1M (in-out) | When to use |
+|---|---|---|
+| **Sonnet 5** (default) | $3/$15 (intro $2/$10) | Balanced — adaptive thinking, near-Opus on agentic/tool work |
+| **Opus 4.8** | $5/$25 | Hardest construction/drafting |
+| **Haiku 4.5** | $1/$5 | Cheapest, but **no thinking** — simple edits only |
+
 | Variable | Default | Effect |
 |---|---|---|
-| `VLA_MODEL` | `claude-haiku-4-5` | Cheapest capable model ($1/$5 per 1M). Use `claude-sonnet-5` ($3/$15) or `claude-opus-4-8` ($5/$25) for more capability. |
+| `VLA_MODEL` | `claude-sonnet-5` | Default model for *new* sessions (the picker overrides per session). |
 | `VLA_VISION_WIDTH` | `700` | Width of the PNG sent to the model. Image tokens scale with pixel area — lower is cheaper. |
 | `VLA_SEND_IMAGE` | `1` | Set to `0` to run **state-only** (no image at all) for the cheapest turns; the structured state is the primary input regardless. |
 | `VLA_MAX_STEPS` | `8` | Max tool-call rounds per turn — caps the worst-case cost of one message. |
