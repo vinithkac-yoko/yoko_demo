@@ -28,3 +28,9 @@ dist-app/
 *.png
 !docs/**/*.png
 scratch/
+
+# local persistence (SQLite store)
+data/
+*.db
+*.db-wal
+*.db-shm

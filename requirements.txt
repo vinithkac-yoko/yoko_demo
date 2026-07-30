@@ -8,3 +8,4 @@ uvicorn[standard]>=0.29
 pydantic>=2
 anthropic>=0.69
 cairosvg>=2.7
+python-multipart>=0.0.9   # file upload (pattern import)

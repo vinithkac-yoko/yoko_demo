@@ -53,7 +53,17 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
     pat.version = root.findtext("version", default="").strip()
     pat.unit = (root.findtext("unit") or "cm").strip()
     pat.pattern_name = (root.findtext("patternName") or "").strip()
+    pat.pattern_number = (root.findtext("patternNumber") or "").strip()
+    pat.description = (root.findtext("description") or "").strip()
+    pat.notes = (root.findtext("notes") or "").strip()
     pat.measurements_file = (root.findtext("measurements") or "").strip()
+
+    # Keep root-level elements we don't model (gradation, patternLabel, company…)
+    _MODELLED_ROOT = {"version", "unit", "patternName", "patternNumber", "description",
+                      "notes", "measurements", "increments", "draftBlock"}
+    for el in root:
+        if el.tag not in _MODELLED_ROOT:
+            pat.raw_root_sections.append(ET.tostring(el, encoding="unicode").strip())
 
     inc_root = root.find("increments")
     if inc_root is not None:
@@ -89,6 +99,12 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
         if pieces is not None:
             for piece in pieces.findall("piece"):
                 pat.pieces.append(_parse_piece(piece))
+
+        # Preserve sections we don't mutate so a written file round-trips.
+        for name in ("modeling", "pieces", "groups"):
+            el = block.find(name)
+            if el is not None:
+                db.raw_sections[name] = ET.tostring(el, encoding="unicode").strip()
 
         pat.draft_blocks.append(db)
 

@@ -47,6 +47,9 @@ class DraftBlock:
     objects: list[PatternObject] = field(default_factory=list)
     modeling: list["ModelingObject"] = field(default_factory=list)
     internal_paths: list["InternalPath"] = field(default_factory=list)
+    # Raw XML of sections we parse but don't mutate (modeling / pieces / groups),
+    # kept verbatim so writing an imported pattern round-trips faithfully.
+    raw_sections: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -116,6 +119,11 @@ class Pattern:
     pieces: list[Piece] = field(default_factory=list)
     # Root-level attributes we do not model explicitly, kept for round-tripping.
     raw_header: dict[str, str] = field(default_factory=dict)
+    # Verbatim XML of root-level elements we don't model (gradation, patternLabel…)
+    raw_root_sections: list[str] = field(default_factory=list)
+    description: str = ""
+    notes: str = ""
+    pattern_number: str = ""
 
     def all_objects(self) -> list[PatternObject]:
         return [o for b in self.draft_blocks for o in b.objects]

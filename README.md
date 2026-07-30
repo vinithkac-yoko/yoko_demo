@@ -30,6 +30,20 @@ backend/    FastAPI + Anthropic tool-use agent loop (vision + per-operation tool
 app/        Mobile-responsive PWA chat client
 ```
 
+## Workflow
+
+1. **Start** a pattern — a **blank canvas** (origin point `A`, ready to draft
+   from nothing), an **imported** `.sm2d`/`.val` file, or the bundled sample.
+2. **Draft/edit** by chatting; the agent calls engine operations (add points,
+   lines, curves, darts; edit any attribute; delete with dependency checks).
+   Scope to a block or work on the whole pattern.
+3. **Save versions** as you go. History is a **branching DAG** — opening an older
+   version and saving creates a branch, so variants never overwrite each other.
+4. **Chat branches too**: "⑂ branch from here" on any message starts a new thread
+   from that point, keeping the original.
+5. **Export** any version as a `.sm2d` file (round-trip verified) and re-import it
+   to start a new lineage.
+
 ## Status
 
 The **vertical-slice engine is complete and proven on a real production
@@ -82,6 +96,17 @@ The repo is Railway-ready (Nixpacks). Push it to a Railway service:
   If cairo is ever unavailable the agent falls back to state-only reasoning, so
   the app still runs.
 - Set the `ANTHROPIC_API_KEY` variable in the Railway service.
+
+### Persisting your patterns (important)
+
+Saved patterns, versions, and chat history live in SQLite at `VLA_DB`
+(default `./data/vla.db`). **Railway's container filesystem is ephemeral**, so to
+keep history across deploys, attach a Volume and point the DB at it:
+
+1. Railway service → **Volumes** → add a volume mounted at `/data`.
+2. Set the variable **`VLA_DB=/data/vla.db`**.
+
+Without a volume the app still works, but the library resets on each redeploy.
 
 ### Cost controls (Railway variables)
 
