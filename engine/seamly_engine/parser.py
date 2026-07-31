@@ -29,6 +29,7 @@ _REF_ATTRS = (
     # additional-tool references
     "p1Line1", "p2Line1", "p1Line2", "p2Line2", "pShoulder",
     "c1Center", "c2Center", "firstArc", "secondArc", "axisP1", "axisP2",
+    "curve1", "curve2", "cCenter", "tangent", "arc",
 )
 
 

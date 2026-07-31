@@ -112,6 +112,14 @@ class PatternSession:
         if tool_type == "trueDarts":
             raw.setdefault("point1", str(new_id + 1))
             raw.setdefault("point2", str(new_id + 2))
+        if tag == "operation":
+            # Each source produces a transformed copy; reserve a destination id
+            # for any child that doesn't already name one.
+            nxt = new_id + 1
+            for ch in kids:
+                if not str(ch.get("dst", "")).isdigit():
+                    ch["dst"] = str(nxt)
+                    nxt += 1
         obj = PatternObject(id=new_id, tag=tag, tool_type=tool_type, raw=raw, children=kids)
         obj.refs = _collect_refs(raw, kids)
 
@@ -122,11 +130,14 @@ class PatternSession:
         newly = set(new_ev.unresolved) - before
 
         makes_geometry = tag in ("point", "arc", "elArc", "spline")
+        dest_ids = [int(c["dst"]) for c in kids if str(c.get("dst", "")).isdigit()]
         resolved_self = (
-            (not makes_geometry)
+            (not makes_geometry and tag != "operation")
             or new_id in new_ev.points
             or new_id in new_ev.curves
             or (tool_type == "trueDarts" and int(raw["point1"]) in new_ev.points)
+            or (tag == "operation" and dest_ids
+                and all(d in new_ev.points or d in new_ev.curves for d in dest_ids))
         )
         if newly or not resolved_self:
             self.pattern = snapshot
@@ -137,8 +148,37 @@ class PatternSession:
         self.added_ids.add(new_id)
         if tool_type == "trueDarts":
             self.added_ids.update({int(raw["point1"]), int(raw["point2"])})
+        self.added_ids.update(dest_ids)
         nm = raw.get("name", "")
         return OpResult(True, f"added {tool_type or tag} {nm} (#{new_id})".replace("  ", " "))
+
+    def set_variable(self, name: str, formula: str, description: str = "") -> OpResult:
+        """Add or update a pattern variable (increment). Re-evaluates and rolls
+        back if the new value breaks any formula that uses it."""
+        from .model import Increment
+        before = set(self.evaluated.unresolved)
+        snapshot = copy.deepcopy(self.pattern)
+        existing = next((i for i in self.pattern.increments if i.name == name), None)
+        if existing is not None:
+            existing.formula = formula
+            if description:
+                existing.description = description
+        else:
+            self.pattern.increments.append(Increment(name=name, formula=formula,
+                                                     description=description))
+        new_ev = self._evaluate()
+        if name not in new_ev.increment_values:
+            self.pattern = snapshot
+            return OpResult(False, f"could not evaluate {name} = {formula!r}")
+        newly = set(new_ev.unresolved) - before
+        if newly:
+            self.pattern = snapshot
+            return OpResult(False, f"{name}={formula!r} broke {len(newly)} object(s)",
+                            blocked_by=sorted(newly))
+        self.evaluated = new_ev
+        val = round(new_ev.increment_values[name], 4)
+        verb = "updated" if existing is not None else "added"
+        return OpResult(True, f"{verb} variable {name} = {formula} ({val})")
 
     def edit_object(self, object_id: int, attrs: dict) -> OpResult:
         """Set one or more attributes of an object (generalizes edit_formula).

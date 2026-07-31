@@ -299,3 +299,85 @@ def test_geometry_helpers():
     assert len(pts) == 2 and math.isclose(pts[0].x, 3, abs_tol=1e-9)
     r = g.rotate_point(g.Point(1, 0), g.Point(0, 0), 90)  # visual CCW 90° → up (−y)
     assert math.isclose(r.x, 0, abs_tol=1e-9) and math.isclose(r.y, -1, abs_tol=1e-9)
+
+
+# --- operations + newly added tools ------------------------------------------
+def test_operations_transform_points_and_curves():
+    sess = _session()
+    ids = _ids(sess)
+    n0 = len(sess.evaluated.points)
+    mirror = sess.add_object("operation", "flippingByLine",
+                             {"p1Line": str(ids["A1"]), "p2Line": str(ids["A3"]), "suffix": "_m"},
+                             children=[{"src": str(ids["A11"])}, {"src": str(ids["A12"])}])
+    assert mirror.ok, mirror.message
+    assert len(sess.evaluated.points) == n0 + 2          # one copy per source
+
+    # a mirrored point is the reflection of its source
+    src = sess.evaluated.points[ids["A11"]]
+    axis_a, axis_b = sess.evaluated.points[ids["A1"]], sess.evaluated.points[ids["A3"]]
+    expect = geo.reflect_point(src, axis_a, axis_b)
+    copies = [sess.evaluated.points[i] for i in sorted(sess.added_ids)
+              if i in sess.evaluated.points]
+    assert any(math.isclose(c.x, expect.x, abs_tol=1e-6) and
+               math.isclose(c.y, expect.y, abs_tol=1e-6) for c in copies)
+
+    # curves transform too
+    ncurves = len(sess.evaluated.curves)
+    res = sess.add_object("operation", "rotation",
+                          {"center": str(ids["A1"]), "angle": "20"},
+                          children=[{"src": "31"}])          # a cubicBezier
+    assert res.ok, res.message
+    assert len(sess.evaluated.curves) == ncurves + 1
+
+
+def test_rotation_and_move_geometry():
+    sess = _session()
+    ids = _ids(sess)
+    base = sess.evaluated.points[ids["A11"]]
+    res = sess.add_object("operation", "moving", {"angle": "0", "length": "5"},
+                          children=[{"src": str(ids["A11"])}])
+    assert res.ok
+    moved = [sess.evaluated.points[i] for i in sess.added_ids if i in sess.evaluated.points]
+    assert any(math.isclose(m.x, base.x + 5, abs_tol=1e-6) and
+               math.isclose(m.y, base.y, abs_tol=1e-6) for m in moved)
+
+
+def test_new_point_tools():
+    sess = _session()
+    ids = _ids(sess)
+    tri = sess.add_object("point", "triangle",
+                          {"axisP1": str(ids["A1"]), "axisP2": str(ids["A2"]),
+                           "firstPoint": str(ids["A11"]), "secondPoint": str(ids["A12"]),
+                           "name": "TRI"})
+    assert tri.ok, tri.message
+    tan = sess.add_object("point", "pointFromCircleAndTangent",
+                          {"cCenter": str(ids["A1"]), "cRadius": "5",
+                           "tangent": str(ids["A3"]), "crossPoint": "1", "name": "TAN"})
+    assert tan.ok, tan.message
+
+
+def test_geometry_tangents_and_triangle():
+    pts = geo.contact_points(geo.Point(10, 0), geo.Point(0, 0), 5)
+    assert len(pts) == 2
+    for p in pts:                       # on the circle, and tangent (radius ⟂ line)
+        assert math.isclose(geo.Point(0, 0).dist(p), 5, abs_tol=1e-9)
+        assert math.isclose(p.x * (10 - p.x) + p.y * (0 - p.y), 0, abs_tol=1e-6)
+    assert geo.contact_points(geo.Point(1, 0), geo.Point(0, 0), 5) == []   # inside
+
+    a, b = geo.Point(5, -6), geo.Point(15, 6)
+    t = geo.triangle_point(geo.Point(0, 0), geo.Point(20, 0), a, b)
+    assert a.dist(b) ** 2 <= t.dist(a) ** 2 + t.dist(b) ** 2 + 1e-6        # right angle
+
+    cross = geo.polyline_intersections([geo.Point(0, 0), geo.Point(10, 10)],
+                                       [geo.Point(0, 10), geo.Point(10, 0)])
+    assert len(cross) == 1 and math.isclose(cross[0].x, 5) and math.isclose(cross[0].y, 5)
+
+
+def test_set_variable():
+    sess = _session()
+    ok = sess.set_variable("#Ease_Hip", "3*#CM", "hip ease")
+    assert ok.ok and math.isclose(sess.evaluated.increment_values["#Ease_Hip"], 3.0)
+    upd = sess.set_variable("#Ease_Hip", "4")
+    assert upd.ok and math.isclose(sess.evaluated.increment_values["#Ease_Hip"], 4.0)
+    bad = sess.set_variable("#Nope", "does_not_exist")
+    assert bad.ok is False

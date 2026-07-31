@@ -275,6 +275,85 @@ def circle_circle_intersections(c1: Point, r1: float, c2: Point, r2: float) -> l
     return [Point(xm + rx, ym + ry), Point(xm - rx, ym - ry)]
 
 
+def contact_points(p: Point, center: Point, radius: float) -> list[Point]:
+    """Tangent points on a circle from an external point ``p``.
+
+    Port of Seamly's ``VGObject::ContactPoints`` — the tangent line from ``p``
+    touches the circle where the radius is perpendicular to it, which puts the
+    touch points on a circle of diameter ``|p-center|`` (Thales). Used by the
+    point-from-arc/circle-and-tangent tools.
+    """
+    d = p.dist(center)
+    if d < radius:          # inside the circle: no tangent
+        return []
+    if abs(d - radius) < 1e-12:
+        return [p]          # on the circle: it is its own tangent point
+    mid = Point((p.x + center.x) / 2.0, (p.y + center.y) / 2.0)
+    return circle_circle_intersections(mid, d / 2.0, center, radius)
+
+
+def triangle_point(axis_p1: Point, axis_p2: Point, first: Point, second: Point) -> Point:
+    """Port of Seamly's ``VToolTriangle::FindPoint``.
+
+    Walks along the axis from where it crosses the hypotenuse (first-second)
+    until the triangle becomes right-angled — i.e. until ``c² <= a² + b²``.
+    """
+    start = line_intersection(axis_p1, axis_p2, first, second)
+    if start is None:
+        raise ValueError("triangle: axis is parallel to the hypotenuse")
+    c = math.floor(first.dist(second))
+    angle = line_angle(axis_p1, axis_p2)
+    step = 1.0
+    length = 0.0
+    for _ in range(100000):                      # bounded; Seamly loops unbounded
+        length += step
+        candidate = from_polar(start, angle, length)
+        a = math.floor(candidate.dist(first))
+        b = math.floor(candidate.dist(second))
+        if c * c <= a * a + b * b:
+            return candidate
+    raise ValueError("triangle: no right-angle point found")
+
+
+def polyline_intersections(a: list[Point], b: list[Point]) -> list[Point]:
+    """All crossing points between two polylines (curve-curve intersection)."""
+    out: list[Point] = []
+    for i in range(len(a) - 1):
+        for j in range(len(b) - 1):
+            hit = _segments_cross(a[i], a[i + 1], b[j], b[j + 1])
+            if hit is not None:
+                out.append(hit)
+    return out
+
+
+def _segments_cross(a1: Point, a2: Point, b1: Point, b2: Point) -> Point | None:
+    r = a2 - a1
+    s = b2 - b1
+    denom = r.x * s.y - r.y * s.x
+    if abs(denom) < 1e-12:
+        return None
+    qp = b1 - a1
+    t = (qp.x * s.y - qp.y * s.x) / denom
+    u = (qp.x * r.y - qp.y * r.x) / denom
+    if -1e-9 <= t <= 1 + 1e-9 and -1e-9 <= u <= 1 + 1e-9:
+        return Point(a1.x + t * r.x, a1.y + t * r.y)
+    return None
+
+
+def pick_cross(pts: list[Point], vertical: str = "1", horizontal: str = "1") -> Point:
+    """Seamly's V/H cross-point selection: 1 = highest/leftmost, 2 = lowest/rightmost."""
+    if not pts:
+        raise ValueError("no intersection")
+    # y grows downward, so "highest" is the smallest y
+    ys = sorted(pts, key=lambda p: p.y)
+    chosen = ys[0] if str(vertical) == "1" else ys[-1]
+    same = [p for p in pts if abs(p.y - chosen.y) < 1e-9]
+    if len(same) > 1:
+        xs = sorted(same, key=lambda p: p.x)
+        chosen = xs[0] if str(horizontal) == "1" else xs[-1]
+    return chosen
+
+
 def rotate_point(p: Point, center: Point, angle_deg: float) -> Point:
     """Rotate ``p`` about ``center`` by ``angle_deg`` (visual CCW, screen coords)."""
     r = center.dist(p)

@@ -108,6 +108,8 @@ POINT_TYPES = [
     "lineIntersectAxis", "curveIntersectAxis",
     "cutSpline", "cutArc", "cutSplinePath",
     "pointOfIntersectionCircles", "pointOfIntersectionArcs",
+    "pointOfIntersectionCurves", "triangle",
+    "pointFromCircleAndTangent", "pointFromArcAndTangent",
 ]
 
 TOOLS: list[dict[str, Any]] = [
@@ -126,7 +128,13 @@ TOOLS: list[dict[str, Any]] = [
             "lineIntersectAxis{basePoint,angle,p1Line,p2Line}; "
             "curveIntersectAxis{basePoint,angle,curve}; "
             "cutSpline|cutArc|cutSplinePath{curve,length}; "
-            "pointOfIntersectionCircles{c1Center,c2Center,c1Radius,c2Radius,crossPoint}. "
+            "pointOfIntersectionCircles{c1Center,c2Center,c1Radius,c2Radius,crossPoint}; "
+            "pointOfIntersectionArcs{firstArc,secondArc,crossPoint}; "
+            "pointOfIntersectionCurves{curve1,curve2,vCrossPoint,hCrossPoint} "
+            "(cross points: 1=highest/leftmost, 2=lowest/rightmost); "
+            "triangle{axisP1,axisP2,firstPoint,secondPoint}; "
+            "pointFromCircleAndTangent{cCenter,cRadius,tangent,crossPoint}; "
+            "pointFromArcAndTangent{arc,tangent,crossPoint}. "
             "Always include a 'name'. Optional: lineType,lineColor,lineWeight."
         ),
         "input_schema": {
@@ -188,6 +196,54 @@ TOOLS: list[dict[str, Any]] = [
                 "name1": {"type": "string"}, "name2": {"type": "string"},
             },
             "required": ["baseLineP1", "baseLineP2", "dartP1", "dartP2", "dartP3"],
+        },
+    },
+    {
+        "name": "add_operation",
+        "description": (
+            "Transform a set of existing objects, creating transformed copies "
+            "(exactly like Seamly's Operations tools). kind: "
+            "'flippingByLine' — mirror across the line p1Line→p2Line; "
+            "'flippingByAxis' — mirror across a vertical|horizontal axis through "
+            "center; 'rotation' — rotate about center by angle (degrees, "
+            "counter-clockwise on screen); 'moving' — translate by length at "
+            "angle. source_ids are the objects to copy (points and curves). "
+            "Use this for 'mirror the front to make the back', 'rotate this "
+            "dart 10°', 'move this piece 5cm right'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string",
+                         "enum": ["flippingByLine", "flippingByAxis", "rotation", "moving"]},
+                "source_ids": {"type": "array", "items": {"type": "integer"},
+                               "description": "ids of the objects to transform"},
+                "p1Line": {"type": "string", "description": "flippingByLine: mirror-axis start point id"},
+                "p2Line": {"type": "string", "description": "flippingByLine: mirror-axis end point id"},
+                "center": {"type": "string", "description": "flippingByAxis/rotation: centre point id"},
+                "axisType": {"type": "string", "enum": ["vertical", "horizontal"]},
+                "angle": {"type": "string", "description": "rotation/moving: angle expression"},
+                "length": {"type": "string", "description": "moving: distance expression"},
+                "suffix": {"type": "string", "description": "suffix for the copies' names, e.g. '_m'"},
+            },
+            "required": ["kind", "source_ids"],
+        },
+    },
+    {
+        "name": "add_variable",
+        "description": (
+            "Add or update a pattern variable (a Seamly 'increment'), e.g. "
+            "#Ease_Bust = 5. Variables can be referenced in any formula and are "
+            "the clean way to make a value adjustable in one place."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "e.g. #Ease_Waist"},
+                "formula": {"type": "string"},
+                "description": {"type": "string"},
+            },
+            "required": ["name", "formula"],
         },
     },
     {
@@ -261,6 +317,18 @@ def _dispatch(session: PatternSession, name: str, args: dict) -> OpResult:
             if args.get(k):
                 attrs[k] = args[k]
         return session.add_object("point", "trueDarts", attrs)
+    if name == "add_operation":
+        srcs = args.get("source_ids") or []
+        if not srcs:
+            return OpResult(False, "add_operation: source_ids is empty")
+        attrs = {"suffix": args.get("suffix", "_c")}
+        for k in ("p1Line", "p2Line", "center", "axisType", "angle", "length"):
+            if args.get(k):
+                attrs[k] = args[k]
+        kids = [{"src": str(s)} for s in srcs]   # dst ids are reserved by the engine
+        return session.add_object("operation", args["kind"], attrs, children=kids)
+    if name == "add_variable":
+        return session.set_variable(args["name"], args["formula"], args.get("description", ""))
     if name == "edit_object":
         return session.edit_object(int(args["object_id"]), args.get("attrs", {}))
     if name == "delete_object":

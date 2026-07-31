@@ -367,6 +367,37 @@ def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
             raise _Unresolved("circles do not intersect")
         p = pts[0] if obj.raw.get("crossPoint", "1") == "1" else pts[min(1, len(pts) - 1)]
 
+    elif t == "triangle":
+        p = geo.triangle_point(ref("axisP1"), ref("axisP2"), ref("firstPoint"), ref("secondPoint"))
+
+    elif t == "pointOfIntersectionCurves":
+        c1 = ev.curves.get(int(obj.raw["curve1"]))
+        c2 = ev.curves.get(int(obj.raw["curve2"]))
+        if c1 is None or c2 is None:
+            raise _Unresolved("curves not resolved")
+        pts = geo.polyline_intersections(c1.polyline(96), c2.polyline(96))
+        if not pts:
+            raise _Unresolved("curves do not intersect")
+        p = geo.pick_cross(pts, obj.raw.get("vCrossPoint", "1"), obj.raw.get("hCrossPoint", "1"))
+
+    elif t == "pointFromCircleAndTangent":
+        center = ref("cCenter")
+        radius = evaluate(obj.raw["cRadius"], scope())
+        pts = geo.contact_points(ref("tangent"), center, radius)
+        if not pts:
+            raise _Unresolved("no tangent from that point")
+        p = pts[0] if obj.raw.get("crossPoint", "1") == "1" else pts[min(1, len(pts) - 1)]
+        ev.values[obj.id] = {"radius": radius}
+
+    elif t == "pointFromArcAndTangent":
+        arc = ev.curves.get(int(obj.raw["arc"]))
+        if not isinstance(arc, geo.Arc):
+            raise _Unresolved("arc not resolved")
+        pts = geo.contact_points(ref("tangent"), arc.center, arc.radius)
+        if not pts:
+            raise _Unresolved("no tangent from that point")
+        p = pts[0] if obj.raw.get("crossPoint", "1") == "1" else pts[min(1, len(pts) - 1)]
+
     elif t == "pointOfIntersectionArcs":
         a1 = ev.curves.get(int(obj.raw["firstArc"]))
         a2 = ev.curves.get(int(obj.raw["secondArc"]))
@@ -456,8 +487,32 @@ def _eval_operation(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
         src, dst = pair.get("src", ""), pair.get("dst", "")
         if not (src.isdigit() and dst.isdigit()):
             continue
-        src_pt = ev.points.get(int(src))
+        sid, did = int(src), int(dst)
+        src_pt = ev.points.get(sid)
         if src_pt is not None:
-            ev.points[int(dst)] = transform(src_pt)
+            ev.points[did] = transform(src_pt)
+            continue
+        # Curves transform by mapping their defining geometry.
+        curve = ev.curves.get(sid)
+        if curve is None:
+            ev.unresolved[did] = f"operation source {src} not resolved"
+        elif isinstance(curve, geo.CubicBezier):
+            ev.curves[did] = geo.CubicBezier(*(transform(p) for p in
+                                               (curve.p0, curve.p1, curve.p2, curve.p3)))
+        elif isinstance(curve, geo.BezierPath):
+            ev.curves[did] = geo.BezierPath(tuple(transform(p) for p in curve.on_and_controls))
+        elif isinstance(curve, geo.Arc):
+            # Move/rotate the centre; mirroring also reverses the sweep direction.
+            new_center = transform(curve.center)
+            if t == "rotation":
+                delta = evaluate(obj.raw["angle"], scope)
+                ev.curves[did] = geo.Arc(new_center, curve.radius,
+                                         curve.angle1 + delta, curve.angle2 + delta)
+            elif t == "moving":
+                ev.curves[did] = geo.Arc(new_center, curve.radius, curve.angle1, curve.angle2)
+            else:  # mirrored: reflect a point on the arc to recover the angles
+                a1 = geo.line_angle(new_center, transform(curve.point_at(curve.angle1)))
+                a2 = geo.line_angle(new_center, transform(curve.point_at(curve.angle2)))
+                ev.curves[did] = geo.Arc(new_center, curve.radius, a2, a1)
         else:
-            ev.unresolved[int(dst)] = f"operation source {src} not a resolved point"
+            ev.unresolved[did] = f"operation cannot transform object {src} yet"
