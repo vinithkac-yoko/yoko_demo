@@ -101,11 +101,16 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
             for piece in pieces.findall("piece"):
                 pat.pieces.append(_parse_piece(piece))
 
-        # Preserve sections we don't mutate so a written file round-trips.
+        # Preserve the *inner* XML of these sections so an imported pattern
+        # round-trips byte-for-byte, while still letting us append newly created
+        # modeling objects and pieces alongside the originals.
         for name in ("modeling", "pieces", "groups"):
             el = block.find(name)
             if el is not None:
-                db.raw_sections[name] = ET.tostring(el, encoding="unicode").strip()
+                db.raw_sections[name] = "".join(
+                    ET.tostring(child, encoding="unicode").strip() for child in el)
+                db.raw_sections[name + "_ids"] = ",".join(
+                    child.get("id", "") for child in el)
 
         pat.draft_blocks.append(db)
 

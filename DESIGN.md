@@ -186,10 +186,16 @@ The **vertical-slice engine is complete and proven on a real production file**
 ## Action set (the agent's tools = the Seamly object model)
 
 `add_point`, `add_line`, `add_curve`, `add_dart`, `add_operation`,
-`add_variable`, `edit_object` (any attribute), `delete_object`
+`create_piece`, `add_variable`, `edit_object` (any attribute), `delete_object`
 (block-and-report). Every mutation assigns ids, re-evaluates, and **rolls back**
 if the result can't be computed or breaks the pattern, so the agent can build
 geometry safely.
+
+**Pieces** (`create_piece`): turns construction geometry into a real cut piece —
+Seamly's two-layer form (a `<modeling>` copy per object + a `<piece>` whose
+`<nodes>` reference them in outline order), with seam allowance, internal paths
+(darts/guides) and a grainline. Created pieces render, export, and reopen; the
+writer appends them without disturbing pieces that came from an imported file.
 
 **Point tools — all 21 of Seamly's are supported:** `single`, `endLine`,
 `alongLine`, `normal`, `bisector`, `intersectXY`, `lineIntersect`, `height`,
@@ -210,9 +216,9 @@ the corresponding Seamly2D C++ tools, verified numerically in the tests.
 
 ## Roadmap
 
-1. **Piece/detail editing** — creating new cut pieces (seam outline, seam
-   allowance, notches, grainline) and the union tool. Construction geometry is
-   complete; this is the main remaining editing gap.
+1. **Remaining piece features** — seam-allowance *offsetting* (the widened cut
+   line is stored as a width, not yet computed as geometry), notches, and the
+   union tool.
 2. **Real-Seamly2D oracle** — automated cross-check (open engine output in the
    Seamly2D CLI, diff geometry) in CI.
 3. **Grading** — evaluate/export across the size range.

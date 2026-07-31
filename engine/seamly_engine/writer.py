@@ -56,6 +56,77 @@ def _object_xml(obj, indent: str) -> str:
     return "\n".join(lines)
 
 
+def _preserved_ids(db, section: str) -> set[str]:
+    return {i for i in db.raw_sections.get(section + "_ids", "").split(",") if i}
+
+
+def _modeling_xml(db) -> list[str]:
+    """<modeling>: imported entries verbatim, plus any we created."""
+    kept = _preserved_ids(db, "modeling")
+    new_objs = [m for m in db.modeling if str(m.id) not in kept]
+    new_paths = [p for p in db.internal_paths if str(p.id) not in kept]
+    raw = db.raw_sections.get("modeling", "")
+    if not raw and not new_objs and not new_paths:
+        return []
+    lines = ["        <modeling>"]
+    if raw:
+        lines.append("            " + raw)
+    for m in new_objs:
+        lines.append(f'            <{m.tag} id="{m.id}" idObject="{m.id_object}"'
+                     f' inUse="true" type="{m.modeling_type}"/>')
+    for p in new_paths:
+        lines.append(f'            <path cut="false" id="{p.id}" inUse="true"'
+                     f' lineType={quoteattr(p.line_type)} name={quoteattr(p.name)} type="2">')
+        lines.append("                <nodes>")
+        for nid in p.node_ids:
+            lines.append(f'                    <node idObject="{nid}" type="NodePoint"/>')
+        lines.append("                </nodes>")
+        lines.append("            </path>")
+    lines.append("        </modeling>")
+    return lines
+
+
+def _pieces_xml(pattern: Pattern, db) -> list[str]:
+    """<pieces>: imported pieces verbatim, plus any we created."""
+    kept = _preserved_ids(db, "pieces")
+    new_pieces = [p for p in pattern.pieces if str(p.id) not in kept]
+    raw = db.raw_sections.get("pieces", "")
+    if not raw and not new_pieces:
+        return []
+    lines = ["        <pieces>"]
+    if raw:
+        lines.append("            " + raw)
+    for p in new_pieces:
+        attrs = dict(p.raw)
+        attrs.update({"id": str(p.id), "name": p.name,
+                      "seamAllowance": "true" if p.seam_allowance else "false",
+                      "width": p.width or "1"})
+        lines.append(f"            <piece{_attrs(attrs)}>")
+        if p.grainline_anchor is not None:
+            lines.append(f'                <grainline arrows="0" centerAnchor="{p.grainline_anchor}"'
+                         f' length="{p.grainline_length or 15}" rotation="{p.grainline_rotation}"'
+                         f' visible="true"/>')
+        lines.append("                <nodes>")
+        for n in p.nodes:
+            rev = ' reverse="0"' if n.node_type != "NodePoint" else ""
+            lines.append(f'                    <node idObject="{n.object_id}"{rev}'
+                         f' type="{n.node_type}"/>')
+        lines.append("                </nodes>")
+        if p.internal_path_ids:
+            lines.append("                <iPaths>")
+            for ip in p.internal_path_ids:
+                lines.append(f'                    <record path="{ip}"/>')
+            lines.append("                </iPaths>")
+        if p.anchor_ids:
+            lines.append("                <anchors>")
+            for a in p.anchor_ids:
+                lines.append(f"                    <record>{a}</record>")
+            lines.append("                </anchors>")
+        lines.append("            </piece>")
+    lines.append("        </pieces>")
+    return lines
+
+
 def pattern_to_xml(pattern: Pattern) -> str:
     """Return the pattern as a Seamly2D ``.sm2d`` XML document."""
     out: list[str] = ['<?xml version="1.0" encoding="UTF-8"?>', "<pattern>"]
@@ -88,10 +159,10 @@ def pattern_to_xml(pattern: Pattern) -> str:
         for obj in db.objects:
             out.append(_object_xml(obj, "            "))
         out.append("        </calculation>")
-        for name in ("modeling", "pieces", "groups"):
-            raw = db.raw_sections.get(name)
-            if raw:
-                out.append("        " + raw)
+        out.extend(_modeling_xml(db))
+        out.extend(_pieces_xml(pattern, db))
+        if db.raw_sections.get("groups"):
+            out.append("        <groups>" + db.raw_sections["groups"] + "</groups>")
         out.append("    </draftBlock>")
 
     out.append("</pattern>")

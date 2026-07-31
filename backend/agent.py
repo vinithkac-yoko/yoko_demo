@@ -230,6 +230,44 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "create_piece",
+        "description": (
+            "Turn construction geometry into a real cut piece (a Seamly detail). "
+            "node_ids are the objects forming the seam outline **in order around "
+            "the piece** — mix points and curves (splines/arcs) as the outline "
+            "requires; the piece closes automatically. Optionally add internal "
+            "paths (darts, fold/guide lines, drill holes) and a grainline anchor. "
+            "Use this once the outline points exist, e.g. 'make this into a front "
+            "bodice piece'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "node_ids": {"type": "array", "items": {"type": "integer"},
+                             "description": "outline objects in order (min 3)"},
+                "seam_allowance": {"type": "boolean"},
+                "width": {"type": "string", "description": "seam allowance width, e.g. '1'"},
+                "grainline_anchor": {"type": "integer",
+                                     "description": "point id the grainline is centred on"},
+                "internal_paths": {
+                    "type": "array",
+                    "description": "darts / guide lines inside the piece",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "line_type": {"type": "string"},
+                            "node_ids": {"type": "array", "items": {"type": "integer"}},
+                        },
+                        "required": ["name", "node_ids"],
+                    },
+                },
+            },
+            "required": ["name", "node_ids"],
+        },
+    },
+    {
         "name": "add_variable",
         "description": (
             "Add or update a pattern variable (a Seamly 'increment'), e.g. "
@@ -327,6 +365,14 @@ def _dispatch(session: PatternSession, name: str, args: dict) -> OpResult:
                 attrs[k] = args[k]
         kids = [{"src": str(s)} for s in srcs]   # dst ids are reserved by the engine
         return session.add_object("operation", args["kind"], attrs, children=kids)
+    if name == "create_piece":
+        return session.create_piece(
+            args["name"], [int(i) for i in args.get("node_ids", [])],
+            seam_allowance=bool(args.get("seam_allowance", True)),
+            width=str(args.get("width", "1")),
+            internal_paths=args.get("internal_paths"),
+            grainline_anchor=(int(args["grainline_anchor"])
+                              if args.get("grainline_anchor") is not None else None))
     if name == "add_variable":
         return session.set_variable(args["name"], args["formula"], args.get("description", ""))
     if name == "edit_object":

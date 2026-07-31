@@ -152,6 +152,37 @@ class PatternSession:
         nm = raw.get("name", "")
         return OpResult(True, f"added {tool_type or tag} {nm} (#{new_id})".replace("  ", " "))
 
+    def create_piece(self, name: str, node_ids: list[int], *,
+                     seam_allowance: bool = True, width: str = "1",
+                     internal_paths: list[dict] | None = None,
+                     grainline_anchor: int | None = None) -> OpResult:
+        """Define a new cut piece from existing construction objects.
+
+        The nodes must be given in outline order (walking the seam), mixing
+        points and curves. Rolls back if the piece can't be built or doesn't
+        produce a usable outline."""
+        from .pieces import build_piece, piece_outline_points
+
+        if len(node_ids) < 3:
+            return OpResult(False, "a piece needs at least 3 outline nodes")
+        snapshot = copy.deepcopy(self.pattern)
+        try:
+            piece = build_piece(self.pattern, self._next_id, name, node_ids,
+                                seam_allowance=seam_allowance, width=width,
+                                internal_paths=internal_paths,
+                                grainline_anchor=grainline_anchor)
+        except Exception as e:  # noqa: BLE001
+            self.pattern = snapshot
+            return OpResult(False, f"could not create piece: {e}")
+
+        outline = piece_outline_points(self.pattern, self.evaluated, piece)
+        if len(outline) < 3:
+            self.pattern = snapshot
+            return OpResult(False, "piece outline could not be resolved from those nodes")
+        self.added_ids.update({piece.id} | {n.object_id for n in piece.nodes})
+        return OpResult(True, f"created piece “{name}” (#{piece.id}) "
+                              f"with {len(piece.nodes)} outline nodes")
+
     def set_variable(self, name: str, formula: str, description: str = "") -> OpResult:
         """Add or update a pattern variable (increment). Re-evaluates and rolls
         back if the new value breaks any formula that uses it."""

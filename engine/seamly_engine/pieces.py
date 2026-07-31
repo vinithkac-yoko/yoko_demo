@@ -13,7 +13,79 @@ agent to one block) build on these helpers.
 from __future__ import annotations
 
 from . import geometry as geo
-from .model import Evaluated, InternalPath, Pattern, Piece
+from .model import Evaluated, InternalPath, ModelingObject, Pattern, Piece, PieceNode
+
+
+def _node_kinds(obj) -> tuple[str, str, str]:
+    """(modeling_type, node_type, xml_tag) for a calculation object used in a piece."""
+    if obj.tag == "spline":
+        if obj.tool_type == "cubicBezierPath":
+            return "modelingPath", "NodeSplinePath", "spline"
+        return "modelingSpline", "NodeSpline", "spline"
+    if obj.tag in ("arc", "elArc"):
+        return "modeling", "NodeArc", "arc"
+    return "modeling", "NodePoint", "point"
+
+
+def build_piece(pattern: Pattern, next_id, name: str, node_ids: list[int], *,
+                seam_allowance: bool = True, width: str = "1",
+                internal_paths: list[dict] | None = None,
+                grainline_anchor: int | None = None,
+                block_index: int = 0) -> Piece:
+    """Create a cut piece from construction objects.
+
+    Seamly represents a piece in two layers: a ``<modeling>`` copy of each
+    construction object it uses, and a ``<piece>`` whose ``<nodes>`` reference
+    those copies in outline order. This builds both, so the result is a real
+    piece — it renders, exports, and reopens in Seamly2D.
+
+    ``next_id`` is a callable returning a fresh object id.
+    """
+    db = pattern.draft_blocks[block_index]
+    by_id = pattern.object_by_id()
+
+    def _model(calc_id: int) -> tuple[int, str]:
+        """Add (or reuse) a modeling copy of a calculation object."""
+        obj = by_id.get(calc_id)
+        if obj is None:
+            raise ValueError(f"no object with id {calc_id}")
+        mtype, ntype, tag = _node_kinds(obj)
+        for m in db.modeling:                      # reuse an existing copy
+            if m.id_object == calc_id and m.modeling_type == mtype:
+                return m.id, ntype
+        mid = next_id()
+        db.modeling.append(ModelingObject(id=mid, id_object=calc_id,
+                                          modeling_type=mtype, tag=tag))
+        return mid, ntype
+
+    piece = Piece(id=next_id(), name=name, seam_allowance=seam_allowance, width=width)
+    piece.raw = {"name": name, "seamAllowance": str(seam_allowance).lower(),
+                 "width": width, "united": "false", "inLayout": "true",
+                 "forbidFlipping": "false", "hideMainPath": "false", "version": "2"}
+
+    for calc_id in node_ids:
+        mid, ntype = _model(calc_id)
+        piece.nodes.append(PieceNode(object_id=mid, node_type=ntype))
+
+    for spec in (internal_paths or []):
+        ids = [_model(i)[0] for i in spec.get("node_ids", [])]
+        if len(ids) < 2:
+            continue
+        ip = InternalPath(id=next_id(), name=spec.get("name", "path"),
+                          line_type=spec.get("line_type", "dashDotLine"), node_ids=ids)
+        db.internal_paths.append(ip)
+        piece.internal_path_ids.append(ip.id)
+
+    if grainline_anchor is not None:
+        aid = next_id()
+        db.modeling.append(ModelingObject(id=aid, id_object=grainline_anchor,
+                                          modeling_type="anchor", tag="point"))
+        piece.grainline_anchor = aid
+        piece.anchor_ids.append(aid)
+        piece.grainline_length = 15.0
+
+    pattern.pieces.append(piece)
+    return piece
 
 
 def modeling_map(pattern: Pattern) -> dict[int, int]:

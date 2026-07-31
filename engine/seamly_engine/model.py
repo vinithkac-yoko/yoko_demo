@@ -64,6 +64,7 @@ class ModelingObject:
     id: int
     id_object: int
     modeling_type: str  # modeling | modelingSpline | modelingPath | anchor
+    tag: str = "point"  # point | spline | arc — the XML element to write
 
 
 @dataclass

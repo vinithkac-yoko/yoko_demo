@@ -69,3 +69,55 @@ def test_build_from_blank_and_roundtrip(meas):
     pat2 = parse_pattern(pattern_to_xml(sess.pattern), is_text=True)
     ev2 = se.evaluate_pattern(pat2, meas)
     assert len(pat2.all_objects()) == 3 and ev2.unresolved == {}
+
+
+# --- piece creation ---------------------------------------------------------
+def test_create_piece_from_blank_canvas(meas):
+    """Draft a block from nothing, turn it into a cut piece, and reload it."""
+    from seamly_engine.pieces import piece_outline_points
+
+    sess = PatternSession(new_pattern("Skirt block"), meas)
+    for attrs in ({"basePoint": "1", "angle": "0", "length": "17", "name": "B"},
+                  {"basePoint": "2", "angle": "270", "length": "60", "name": "C"},
+                  {"basePoint": "1", "angle": "270", "length": "60", "name": "D"}):
+        assert sess.add_object("point", "endLine", attrs).ok
+
+    res = sess.create_piece("Skirt Front", [1, 2, 3, 4], grainline_anchor=1,
+                            internal_paths=[{"name": "Dart 1", "node_ids": [1, 3]}])
+    assert res.ok, res.message
+    piece = sess.pattern.pieces[0]
+    assert len(piece.nodes) == 4 and piece.internal_path_ids and piece.grainline_anchor
+
+    outline = piece_outline_points(sess.pattern, sess.evaluated, piece)
+    assert len(outline) == 5                      # 4 corners + closing point
+    assert math.isclose(outline[1].x, 17.0, abs_tol=1e-6)
+    assert math.isclose(outline[2].y, 60.0, abs_tol=1e-6)
+
+    # survives save + reload
+    pat2 = parse_pattern(pattern_to_xml(sess.pattern), is_text=True)
+    ev2 = se.evaluate_pattern(pat2, meas)
+    assert len(pat2.pieces) == 1 and pat2.pieces[0].name == "Skirt Front"
+    assert len(pat2.pieces[0].nodes) == 4 and ev2.unresolved == {}
+    reloaded = piece_outline_points(pat2, ev2, pat2.pieces[0])
+    assert [(round(p.x, 4), round(p.y, 4)) for p in reloaded] == \
+           [(round(p.x, 4), round(p.y, 4)) for p in outline]
+
+
+def test_create_piece_rejects_too_few_nodes(meas):
+    sess = PatternSession(new_pattern("X"), meas)
+    assert sess.create_piece("bad", [1]).ok is False
+
+
+def test_adding_piece_preserves_imported_pieces(meas):
+    """A new piece must not disturb the pieces that came from the file."""
+    pat = se.load_pattern(str(FIX / "aldrich_basic.sm2d"))
+    sess = PatternSession(pat, meas)
+    ids = {o.raw.get("name"): o.id for o in pat.all_objects() if o.raw.get("name")}
+    before = [p.name for p in pat.pieces]
+
+    assert sess.create_piece("New Panel",
+                             [ids["A1"], ids["A9"], ids["A10"], ids["A8"]]).ok
+
+    pat2 = parse_pattern(pattern_to_xml(sess.pattern), is_text=True)
+    assert [p.name for p in pat2.pieces] == before + ["New Panel"]
+    assert se.evaluate_pattern(pat2, meas).unresolved == {}
