@@ -214,6 +214,18 @@ writer appends them without disturbing pieces that came from an imported file.
 The trickier algorithms (`trueDarts`, `triangle`, tangent points) are ports of
 the corresponding Seamly2D C++ tools, verified numerically in the tests.
 
+## Instruction documents → patterns and datasets
+
+A pattern-making school's handout (prose + hand-drawn figures) can be turned into
+a working parametric pattern *and* into evaluation data for the agent. `dataset/`
+does both: a closed ten-verb IR for extracted drafting steps, a normalizer that
+reports precisely what the prose leaves undetermined, and a compiler that
+executes each step as **real agent tool calls** on a live `PatternSession` — so a
+step only enters the dataset if the engine actually built its geometry.
+
+The first document (Angrakha Maxi, 4 panels) compiles 27 of 31 steps into a
+101-object pattern with 0 unresolved objects. See `docs/DATASETS.md`.
+
 ## Roadmap
 
 1. **Remaining piece features** — seam-allowance *offsetting* (the widened cut
