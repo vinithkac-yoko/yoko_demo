@@ -2,19 +2,56 @@
 
 ## The question
 
-*"I have these kinds of files. Can we create a dataset for our model with
-them?"* — a two-page PDF of drafting instructions (Angrakha Maxi), plus a JSONL
-where each sentence has been extracted into a structured row.
+*"I will just give you the PDFs. Will you be able to interpret them and turn
+them into Seamly2D actions? And build a reward system around it?"*
 
-**Yes, and they're worth collecting.** But not as training data in the naive
-sense — 27 rows is nowhere near enough to train anything, and fine-tuning isn't
-the bottleneck anyway. What these files are worth is different and, for this
-system, more valuable. This document explains what the pipeline in `dataset/`
-does with them and what it found in the first one.
+**Yes to both.** The input is the PDF a pattern-making school hands out — prose
+plus hand-drawn figures. The output is a working parametric pattern, a dataset
+of verified drafting actions, and a scalar reward that can score any policy
+against the document without a human in the loop.
+
+Not training data in the naive sense, though: one document is ~30 steps, nowhere
+near enough to train anything, and fine-tuning isn't the bottleneck. What these
+files buy you first is an **eval** — the thing the project most lacks.
+
+## The pipeline
+
+```
+   PDF ──▶ extract.py ──▶ actions.jsonl ──▶ normalize.py ──▶ compile.py ──▶ .sm2d
+            (vision)        (the IR)         (find gaps)      (execute)     dataset
+                                                                  │           report
+                                                                  ▼
+                                                            evaluate.py ──▶ reward
+```
+
+Four commands, each usable on its own:
+
+```bash
+python -m dataset.extract  Angrakha_Maxi.pdf --garment angrakha_maxi
+python -m dataset.build    dataset/sources/angrakha_maxi.jsonl -o build/
+python -m dataset.evaluate dataset/sources/angrakha_maxi.jsonl --policy agent
+python -m dataset.evaluate dataset/sources/angrakha_maxi.jsonl --policy agent --rollout
+```
+
+## Reading the PDF
+
+`dataset/extract.py` splits each page into its text and its embedded figures
+(dropping the letterhead that repeats on every page), sends both to the model,
+and gets back rows in the IR. Two things make it work rather than merely run:
+
+* **The extraction contract is generated from `schema.py`**, so the prompt
+  cannot drift from what the compiler accepts. It also pins the angle convention
+  — degrees counter-clockwise with y down, `0` right and `270` down — which is
+  the single easiest thing to get backwards.
+* **A bearing is required, not optional.** For every offset, slope drop, and
+  seam allowance the extractor must give an `angle` read off the drawing, and
+  may **insert** steps the prose omits but the figure shows. Each row carries its
+  own `confidence`.
+
+Every reply is cached by content hash, so a document is read once, can be
+reviewed and hand-corrected, and then committed. Re-running costs nothing.
 
 ## What one document actually yields
-
-Run it:
 
 ```bash
 python -m dataset.build dataset/sources/angrakha_maxi.jsonl -o build/
@@ -116,13 +153,72 @@ appearing in the report as an open question. Two remain on this document —
 `D - D1 → 0.5" inward` (which way is "inward"?) and `A1 - B1` (points belonging
 to a cutting layout the text never draws).
 
+## The reward system
+
+`dataset/reward.py` scores a drafting step from the engine's own geometry — no
+human, no judge model. Seven components, each earning its place by catching a
+failure the others miss:
+
+| Component | Weight | Catches |
+|---|---|---|
+| `executed` | 0.18 | malformed calls, and doing nothing |
+| `valid` | 0.14 | edits that leave the pattern unresolvable |
+| `nondestructive` | 0.10 | silently moving geometry that already existed |
+| `placement` | 0.28 | did the new points land where the document put them |
+| `structure` | 0.10 | same tool, built from the same points |
+| `parametric` | 0.15 | `#chest/6` versus a baked `6.0` |
+| `economy` | 0.05 | scaffolding strewn everywhere |
+
+`placement` is distance-shaped rather than binary: within 0.05" is full marks,
+beyond 1" is zero, linear between. `parametric` is scored *relative to the
+reference*, so a step that genuinely is a constant ("1 inch seam allowance")
+isn't punished for being one.
+
+### Calibrating it
+
+A metric nobody has calibrated is decoration, so `dataset/evaluate.py` ships
+policies whose scores are known in advance. Measured on the Angrakha Maxi:
+
+| Policy | What it does | Teacher-forced | Rollout |
+|---|---|---|---|
+| `reference` | replays the document's own calls | **1.000** | **1.000** |
+| `noop` | nothing | 0.061 | 0.089 |
+| `literal` | identical geometry, every formula collapsed to its number | 0.915 | 0.932 |
+| `perturb` | same construction, distances ×1.1 | 0.885 | 0.706 |
+| `agent` | the real model, one turn per step | — | — |
+
+The two that matter: `reference` scores exactly 1.0 (the reward never punishes
+correctness), and `literal` loses **only** `parametric` — 0.43 against 1.00,
+everything else untouched. That is the component doing precisely the job it
+claims, on the failure mode that renders perfectly and is worthless.
+
+### Two ways to run an episode
+
+*Teacher forcing* (default) hands the policy the reference's pattern at every
+step, so one bad step can't poison the rest. It isolates per-step skill — the
+right mode for comparing models or prompt changes.
+
+*Rollout* (`--rollout`) lets the policy carry its own pattern forward. Errors
+compound exactly as they would in the app, and it is the only mode where
+comparing the finished patterns means anything: `perturb` scores 0.885 forced
+but 0.706 rolled out, finishing with 4 of 53 points in the right place.
+
+### What it is not
+
+This rewards **agreement with one document's construction**, not garment
+quality. Two drafters can reach a correct block by different routes; the second
+one scores lower here. That is the right trade for evaluation and for
+rejection sampling, and the wrong one for judging whether a pattern fits — which
+still needs a person. The weights are a plain dict and are meant to be tuned
+against outcomes you actually care about.
+
 ## Is it worth collecting more?
 
-Yes — but collect the **PDFs**, not just the extracted JSONL. Concretely:
+Yes — and the PDFs are all that's needed now; the JSONL is generated. Concretely:
 
-* **The JSONL alone caps out at ~two-thirds of a garment.** The figures carry
-  the rest. Keep both, and keep the `source_image` link between them (the
-  extraction already does — that field is what makes the report actionable).
+* **Text alone caps out at ~two-thirds of a garment.** The figures carry the
+  rest, which is why extraction is multimodal and why every row records the
+  `source_image` it came from.
 * **Value per document is high and front-loaded.** One document produced a
   complete four-panel parametric block and 27 verified examples. Ten
   documents is a usable eval set. A hundred is a fine-tuning corpus and,
@@ -130,13 +226,11 @@ Yes — but collect the **PDFs**, not just the extracted JSONL. Concretely:
   does not ship and cannot be bought.
 * **Cost per document falls fast.** The vocabulary is small and closed: ten
   verbs covered a whole garment, and the second document from the same school
-  will mostly reuse them. What doesn't amortise is the figure-reading, which is
-  currently a person with the overrides file — and is the obvious next thing to
-  automate, since reading a hand-drawn figure and saying "C₁ is below C" is
-  exactly what a vision model is good at.
-* **The extractor needs tightening at the source.** Every issue in the list
-  above is cheap to fix in extraction and expensive to fix downstream. The
-  schema in `dataset/schema.py` is the contract to extract against.
+  will mostly reuse them. Extraction is one cached model call per PDF.
+* **Review is where the remaining human time goes.** The report names every
+  step the document under-determines, and the overrides file answers each one
+  once with provenance. Rows the extractor marks `confidence: "low"` are the
+  ones to read first.
 
 The honest limitation: the placeholder measurements in `schema.py` are made up.
 The compiled pattern is parametric and evaluates, but it is drafted for nobody
@@ -148,8 +242,14 @@ garment needs, never what they are.
 ```
 dataset/
   schema.py     the drafting-action IR — ten verbs, each declaring what it needs
+  extract.py    PDF (text + figures) -> drafting actions, cached by content hash
   normalize.py  clean the rows; say precisely what the prose leaves out
   compile.py    execute each step as real agent tool calls on a live pattern
   build.py      CLI: pattern + render + dataset + open-questions report
+  reward.py     score a step from geometry alone — seven components
+  evaluate.py   replay a document through a policy; calibration policies
   sources/      the documents, each with its optional overrides file
 ```
+
+Extraction needs `ANTHROPIC_API_KEY` for a cold run; everything downstream —
+build, compile, reward, evaluate — runs offline.

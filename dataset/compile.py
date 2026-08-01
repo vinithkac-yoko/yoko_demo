@@ -24,6 +24,7 @@ panel (``C`` → ``C_L``) because Seamly point names are pattern-global.
 
 from __future__ import annotations
 
+import copy
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,6 +69,10 @@ class CompiledStep:
     message: str
     state_before: dict | None = None
     skipped: str = ""
+    #: Deep copy of the session as it stood *after* this step. Only populated
+    #: when ``keep_sessions=True`` — the evaluator needs it to hand an agent the
+    #: exact pattern the reference had at each point in the episode.
+    session_after: PatternSession | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -88,6 +93,10 @@ class CompileResult:
     session: PatternSession
     steps: list[CompiledStep]
     variables: dict[str, float]
+    #: The session before any step ran — blocks and declared variables, no
+    #: geometry. Only populated with ``keep_sessions=True``; the evaluator needs
+    #: it as the starting state of an episode.
+    initial_session: PatternSession | None = None
 
     @property
     def verified(self) -> list[CompiledStep]:
@@ -99,15 +108,18 @@ class CompileResult:
 
 
 def compile_document(doc: Document, *, name: str | None = None,
-                     unit: str = "inch", capture_state: bool = True) -> CompileResult:
-    return _Compiler(doc, name=name, unit=unit, capture_state=capture_state).run()
+                     unit: str = "inch", capture_state: bool = True,
+                     keep_sessions: bool = False) -> CompileResult:
+    return _Compiler(doc, name=name, unit=unit, capture_state=capture_state,
+                     keep_sessions=keep_sessions).run()
 
 
 class _Compiler:
     def __init__(self, doc: Document, *, name: str | None, unit: str,
-                 capture_state: bool):
+                 capture_state: bool, keep_sessions: bool = False):
         self.doc = doc
         self.capture_state = capture_state
+        self.keep_sessions = keep_sessions
         pattern = Pattern(unit=unit, pattern_name=name or doc.garment.replace("_", " ").title())
         self.session = PatternSession(pattern)
         self.panels: dict[str, Panel] = {}
@@ -122,9 +134,10 @@ class _Compiler:
         self._declare_variables()
         for panel_name in self.doc.panels:
             self._make_panel(panel_name)
+        initial = copy.deepcopy(self.session) if self.keep_sessions else None
         for action in self.doc.actions:
             self._apply(action)
-        return CompileResult(self.session, self.steps, self.variables)
+        return CompileResult(self.session, self.steps, self.variables, initial)
 
     def _declare_variables(self) -> None:
         """Every measurement the document names becomes a pattern variable.
@@ -403,8 +416,10 @@ class _Compiler:
 
     def _angle(self, panel: Panel, a: DraftAction) -> str:
         """Bearing in engine convention (0 = right, 270 = down)."""
-        if "angle" in a.overrides:
+        if "angle" in a.overrides:            # a human correction always wins
             return str(a.overrides["angle"])
+        if a.angle is not None:               # then a bearing read off the figure
+            return f"{a.angle:g}"
         if a.direction == "vertical":
             return "90" if panel.flip_y else "270"
         if a.direction == "horizontal":
@@ -466,7 +481,8 @@ class _Compiler:
         self.steps.append(CompiledStep(
             action=a, instruction=a.instruction(),
             tool_calls=[_public(c) for c in calls], ok=ok,
-            message=message or skipped, state_before=state_before, skipped=skipped))
+            message=message or skipped, state_before=state_before, skipped=skipped,
+            session_after=copy.deepcopy(self.session) if self.keep_sessions else None))
 
 
 class _Undetermined(Exception):
@@ -515,7 +531,13 @@ def _is_point_ref(ref: str) -> bool:
 
 def _variable_name(a: DraftAction) -> str:
     if a.outputs and not _is_point_ref(a.outputs[0]):
-        return "#" + a.outputs[0]
+        # "Required measurement: Waist" extracts as `waist_measurement`; it names
+        # the same quantity every formula calls `waist`.
+        name = a.outputs[0]
+        for suffix in ("_measurement", "_value"):
+            if name.endswith(suffix) and len(name) > len(suffix):
+                name = name[: -len(suffix)]
+        return "#" + name
     text = (a.raw_text or a.notes or "value").split("->")[-1]
     for stop in ("as per requirement", "(same as given in left part)", "as per"):
         text = text.replace(stop, "")

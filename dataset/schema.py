@@ -130,6 +130,10 @@ class DraftAction:
     value: float | None = None           # numeric literal, source units
     value_raw: str | None = None
     direction: str | None = None
+    angle: float | None = None      # bearing read off the figure (0 = right, 270 = down)
+    along: list[str] = field(default_factory=list)  # the line an along_line step runs on
+    confidence: str = ""            # extractor's own confidence: high | medium | low
+    page: int | None = None
     notes: str = ""
     raw_text: str = ""
     source_image: str = ""
@@ -170,7 +174,9 @@ class DraftAction:
             "outputs": self.outputs, "inputs": self.inputs,
             "formula": self.formula, "formula_raw": self.formula_raw,
             "value": self.value, "value_raw": self.value_raw,
-            "direction": self.direction, "notes": self.notes,
+            "direction": self.direction, "angle": self.angle,
+            "along": self.along, "confidence": self.confidence,
+            "page": self.page, "notes": self.notes,
             "raw_text": self.raw_text, "source_image": self.source_image,
             "duplicate_of": self.duplicate_of,
             "issues": [i.as_dict() for i in self.issues],

@@ -223,6 +223,22 @@ reports precisely what the prose leaves undetermined, and a compiler that
 executes each step as **real agent tool calls** on a live `PatternSession` — so a
 step only enters the dataset if the engine actually built its geometry.
 
+The front of the pipeline is multimodal: `dataset/extract.py` sends each page's
+text **and its figures** to the model, because roughly a third of a real
+document's steps have no bearing in the prose — only in the drawing. Extraction
+is cached by content hash, so a PDF is read once and the result can be reviewed
+and committed.
+
+The back of it is a **reward function** (`dataset/reward.py`): seven components
+computed from the engine's own geometry — executed, valid, nondestructive,
+placement, structure, parametric, economy — so any policy can be scored against
+a document with no human and no judge model. `dataset/evaluate.py` replays a
+document through a policy, either teacher-forced (per-step skill) or as a
+rollout (errors compound), and ships calibration policies whose scores are known
+in advance: the document scores itself exactly 1.000, doing nothing scores 0.06,
+and a policy that builds identical geometry out of baked numbers loses only the
+`parametric` component.
+
 The first document (Angrakha Maxi, 4 panels) compiles 27 of 31 steps into a
 101-object pattern with 0 unresolved objects. See `docs/DATASETS.md`.
 

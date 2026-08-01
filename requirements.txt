@@ -9,3 +9,4 @@ pydantic>=2
 anthropic>=0.69
 cairosvg>=2.7
 python-multipart>=0.0.9   # file upload (pattern import)
+pypdf>=4.2                # read instruction PDFs (dataset/extract.py)

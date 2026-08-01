@@ -151,6 +151,13 @@ def normalize(rows: list[dict], overrides: dict | None = None,
     return doc
 
 
+def _as_float(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _merge_inserts(rows: list[dict], inserts: list[dict]) -> list[dict]:
     """Fold figure-derived rows into the document, keeping each panel's order."""
     if not inserts:
@@ -178,7 +185,12 @@ def _split_row(row: dict, garment: str, panel: str) -> list[DraftAction]:
             garment=garment, panel=panel, step_index=float(row.get("step_index", 0)),
             action=action, outputs=o, inputs=i,
             formula_raw=row.get("formula"), value_raw=row.get("value"),
-            direction=row.get("direction"), notes=row.get("notes") or "",
+            direction=row.get("direction"),
+            angle=_as_float(row.get("angle")),
+            along=list(row.get("along") or []),
+            confidence=row.get("confidence") or "",
+            page=row.get("page"),
+            notes=row.get("notes") or "",
             raw_text=row.get("raw_text") or "", source_image=row.get("source_image") or "",
         )
 
@@ -226,9 +238,12 @@ def _normalize_action(a: DraftAction, defined: dict[str, set[str]],
 
     # An "along_line" step needs the line it runs along; the note usually says.
     if a.direction == "along_line" and "along" not in a.overrides:
-        m = _ALONG.search(f"{a.notes} {a.raw_text}")
-        if m:
-            a.overrides["along"] = [m.group(1), m.group(2)]
+        if a.along:
+            a.overrides["along"] = list(a.along)
+        else:
+            m = _ALONG.search(f"{a.notes} {a.raw_text}")
+            if m:
+                a.overrides["along"] = [m.group(1), m.group(2)]
 
     _check_refs(a, defined, traced_from)
     _check_required(a)
@@ -279,6 +294,8 @@ def _check_required(a: DraftAction) -> None:
                                   needs="measure"))
         elif need == "direction" and a.direction == "cross":
             pass
+        elif need == "direction" and a.angle is not None:
+            pass
         elif need == "direction" and a.direction in (None, "offset"):
             a.issues.append(Issue(
                 "missing_direction",
@@ -290,7 +307,7 @@ def _check_required(a: DraftAction) -> None:
 
     # An offset/inward step is a distance with no bearing unless overridden.
     if a.action in ("DEFINE_POINT_OFFSET", "APPLY_SEAM_ALLOWANCE") \
-            and "angle" not in a.overrides:
+            and "angle" not in a.overrides and a.angle is None:
         a.issues.append(Issue(
             "missing_direction",
             f"{a.raw_text!r} offsets by a distance but the direction is only in "
