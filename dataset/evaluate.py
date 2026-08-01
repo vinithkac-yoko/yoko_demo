@@ -238,17 +238,17 @@ def run_episode(source: str | Path, policy: Policy, *,
 
 
 def _empty_session(result) -> PatternSession:
-    """The pattern before any step ran: the blocks and the variables declared
-    up front, and no geometry. Taken from the compiler rather than reconstructed
-    — stripping the finished pattern would leave behind every variable a later
-    step went on to create."""
-    if result.initial_session is not None:
-        return copy.deepcopy(result.initial_session)
-    empty = copy.deepcopy(result.session)
-    for block in empty.pattern.draft_blocks:
-        block.objects = []
-    empty.evaluated = empty._evaluate()  # noqa: SLF001 — re-evaluate the emptied pattern
-    return empty
+    """The pattern before any step ran: the blocks and the variables declared up
+    front, and no geometry.
+
+    Taken from the compiler, which snapshots it, rather than reconstructed by
+    stripping the finished pattern — that would leave behind every variable a
+    later step went on to create, and the first step would be scored against a
+    starting state it never had.
+    """
+    if result.initial_session is None:
+        raise ValueError("compile the document with keep_sessions=True to run an episode")
+    return copy.deepcopy(result.initial_session)
 
 
 def main(argv: list[str] | None = None) -> int:

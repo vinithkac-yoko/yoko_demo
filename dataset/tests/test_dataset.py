@@ -183,3 +183,33 @@ def test_build_writes_a_reopenable_pattern(tmp_path):
     reopened = parse_pattern(str(tmp_path / "angrakha_maxi.sm2d"))
     assert len(reopened.draft_blocks) == 4
     assert (tmp_path / "angrakha_maxi.report.md").read_text().startswith("# angrakha_maxi")
+
+
+# --- the boundary -------------------------------------------------------------
+def test_the_engine_does_not_know_this_package_exists():
+    """`dataset/` builds *on* the engine and the agent; nothing flows back.
+
+    The engine is the proven part of this system. Keeping the dependency
+    one-directional is what lets it stay that way: a document pipeline that
+    needed engine changes to work would be a pipeline that had started
+    reshaping the thing it depends on.
+    """
+    import subprocess
+
+    hits = subprocess.run(
+        ["git", "grep", "-l", "-e", "dataset\\.", "-e", "import dataset",
+         "--", "engine/", "backend/"],
+        cwd=ROOT, capture_output=True, text=True).stdout.split()
+    assert hits == []
+
+
+def test_only_the_engines_public_surface_is_used():
+    """No reaching into private helpers — those are free to change."""
+    import re
+
+    offenders = []
+    for path in (ROOT / "dataset").glob("*.py"):
+        for line in path.read_text().splitlines():
+            if re.search(r"from (seamly_engine|agent)[\w.]* import .*\b_\w", line):
+                offenders.append(f"{path.name}: {line.strip()}")
+    assert offenders == []
