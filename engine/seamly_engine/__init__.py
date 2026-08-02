@@ -4,12 +4,14 @@ Public surface:
 
     from seamly_engine import load_pattern, load_measurements, evaluate_pattern
     from seamly_engine import export_state
+    from seamly_engine import TOOLS, dispatch_tool   # the action space
 
 See ``DESIGN.md`` for the architecture and the VLA state representation.
 """
 
 from __future__ import annotations
 
+from .actions import TOOLS, dispatch_tool
 from .evaluator import evaluate_pattern
 from .measurements import MeasurementTable, parse_measurements
 from .model import Evaluated, Pattern
@@ -17,6 +19,8 @@ from .parser import parse_pattern
 
 __all__ = [
     "Pattern",
+    "TOOLS",
+    "dispatch_tool",
     "Evaluated",
     "MeasurementTable",
     "parse_pattern",

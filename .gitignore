@@ -11,10 +11,6 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# Node / PWA tooling (if added later)
-node_modules/
-dist-app/
-
 # Env & secrets
 .env
 *.local
@@ -29,8 +25,5 @@ dist-app/
 !docs/**/*.png
 scratch/
 
-# local persistence (SQLite store)
-data/
-*.db
-*.db-wal
-*.db-shm
+# generated patterns / renders
+*.sm2d.out

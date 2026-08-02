@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "seamly-engine"
 version = "0.1.0"
-description = "Headless Seamly2D-compatible pattern engine with a VLA-oriented state representation"
+description = "Headless Seamly2D-compatible pattern engine: a machine-agent environment for sewing-pattern drafting"
+readme = "../README.md"
 requires-python = ">=3.10"
 dependencies = []
 

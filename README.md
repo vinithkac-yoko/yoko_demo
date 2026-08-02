@@ -1,133 +1,162 @@
-# VLA Pattern Drafting
+# seamly-engine
 
-A system where an AI **VLA (vision-language-action) model** performs **instructed
-edits** on a base sewing pattern inside a **headless, Seamly2D-compatible
-engine**. The model reasons over both a **rendered image** and a **structured,
-semantically-tagged representation** of the pattern state — every point, line,
-and curve is tagged (construction vs. final, dart vs. seamline vs. grainline),
-with its formula, its resolved value, what it's built from, and what depends on
-it. The phone is a thin chat/control client; the engine and agent run
-server-side.
+A **headless, Seamly2D-compatible sewing-pattern engine** in Python, with a
+state representation built for machine agents.
 
-See **[DESIGN.md](DESIGN.md)** for the full architecture, the state-representation
-schema, and the roadmap.
+This repository is the **environment**. It parses, evaluates, mutates, renders
+and writes parametric sewing patterns, and it exposes a small, closed action
+space that any policy — a prompted model, a fine-tuned one, a replayed
+instruction document, a person — can drive. What those policies *are* lives
+elsewhere; this repo is the world they act in, and its job is to stay correct.
+
+## What makes it a usable environment
+
+Three things, and they map to the three parts of any agent contract.
+
+**Observation — `state.py`.** Not a screenshot and not raw XML. Every object is
+semantically tagged: what tool made it, what it is *for* (seamline, dart,
+grainline, drill hole, construction), whether it belongs to a real cut piece,
+what it was built from, what depends on it, and each formula in both its raw and
+its resolved form.
+
+```jsonc
+{"id": 386, "name": "C1", "kind": "point", "tool_type": "endLine",
+ "role": "seamline", "construction": false, "final_outline": true,
+ "built_from": [377], "dependents": [387, 390, 397, 467],
+ "xy": [10.79375, 2.55833],
+ "formula": {"length": {"raw": "1.5*#CM", "value": 1.5},
+             "angle":  {"raw": "270", "value": 270.0}}}
+```
+
+Construction-vs-real is **derived from piece membership, never guessed**.
+Seamly's `lineType` is cosmetic — a dotted line can be a real dart leg and a
+solid one pure scaffolding — so an object is real iff a piece's outline or one
+of its internal paths references it.
+
+**Action space — `actions.py`.** Nine tools covering the Seamly object model:
+`add_point` (all 21 point tools), `add_line`, `add_curve`, `add_dart`,
+`add_operation`, `create_piece`, `add_variable`, `edit_object`, `delete_object`.
+`TOOLS` is the JSON schema a model is shown; `dispatch_tool` is the transition
+function.
+
+**Transition guarantees — `operations.py`.** Every mutation re-evaluates the
+whole pattern and **rolls back** if the result can't be computed. Delete is
+**block-and-report**: deleting something others depend on is refused and the
+dependent chain comes back, so the pattern is never silently broken. Dispatch
+**never raises** — a malformed call returns a readable reason a policy can
+correct from.
+
+## Formulas are not numbers
+
+`length`/`angle`/`radius` are expressions in Seamly's qmuparser grammar:
+arithmetic, C-style ternaries (`size>22?4.75:4`), degree trig (`cosD`), and
+three kinds of variable — measurement names, `#`-prefixed increments, and
+**pseudo-variables that read live geometry**:
+
+| Pseudo-variable | Resolves to |
+|---|---|
+| `Line_A_B` | current distance between points *A* and *B* |
+| `AngleLine_A_B` | that segment's visual angle |
+| `RadiusArc_…` | an arc's radius |
+| `Spl_A_B` / `SplPath_A_B` | arc length along a spline between two points on it |
+| `CurrentLength` | the current tool's natural base length |
+
+Because these read geometry, formula evaluation is **coupled to the DAG
+evaluator**: resolve dependencies → compute geometry → expose it back into the
+namespace for later formulas. You cannot compute a point whose angle is
+`AngleLine_A13_A13a+90` without real coordinates for `A13`.
 
 ## Layout
 
 ```
-engine/     Headless Seamly2D engine (Python) — the core
-  seamly_engine/
-    parser.py        .sm2d XML → object model
-    measurements.py  .vst/.smms multi-size table + grading
-    formula.py       qmuparser-compatible expression engine
-    geometry.py      points, lines, arcs, cubic Bézier + paths
-    evaluator.py     DAG evaluation (formulas read live geometry)
-    operations.py    edit / delete (block + report dependents)
-    state.py         the VLA state representation (semantic tagging)
-    render.py        SVG (construction dimmed, final bold)
-  tests/             pytest suite + real fixtures (Aldrich basic set)
-backend/    FastAPI + Anthropic tool-use agent loop (vision + per-operation tools)
-app/        Mobile-responsive PWA chat client
+seamly_engine/
+  model.py         Pattern / DraftBlock / PatternObject / Piece / Evaluated
+  parser.py        .sm2d XML -> object model (lossless; keeps every raw attribute)
+  writer.py        object model -> .sm2d (byte-identical round-trip)
+  measurements.py  .vst / .smms multi-size tables
+  formula.py       qmuparser-compatible expression engine
+  geometry.py      points, arcs, cubic Beziers, Bezier paths, elliptical arcs
+  evaluator.py     construction-DAG evaluation
+  operations.py    PatternSession — the mutation API, with rollback
+  actions.py       the action space: TOOLS + dispatch_tool
+  state.py         the semantically-tagged state representation
+  pieces.py        piece grouping, outlines, piece construction
+  render.py        SVG (construction dimmed, final bold)
+  authoring.py     blank-canvas pattern creation
+tests/             57 tests + real fixtures (Aldrich 6th-ed. basic set)
 ```
-
-## Workflow
-
-1. **Start** a pattern — a **blank canvas** (origin point `A`, ready to draft
-   from nothing), an **imported** `.sm2d`/`.val` file, or the bundled sample.
-2. **Draft/edit** by chatting; the agent calls engine operations (add points,
-   lines, curves, darts; edit any attribute; delete with dependency checks).
-   Scope to a block or work on the whole pattern.
-3. **Save versions** as you go. History is a **branching DAG** — opening an older
-   version and saving creates a branch, so variants never overwrite each other.
-4. **Chat branches too**: "⑂ branch from here" on any message starts a new thread
-   from that point, keeping the original.
-5. **Export** any version as a `.sm2d` file (round-trip verified) and re-import it
-   to start a new lineage.
 
 ## Status
 
-The **vertical-slice engine is complete and proven on a real production
-pattern** — the Aldrich 6th-ed. basic set (skirt, trousers, bodice, one-piece
-sleeve, 425 objects): parses the file, runs the full formula engine, and
-evaluates **all 425 objects to finite geometry with 0 unresolved**, including
-`trueDarts`, `flippingByLine`, `SplPath` arc-length-along-path, `pointOfContact`,
-`curveIntersectAxis`, and `bisector`. Delete/edit operations, the semantic state
-export, the SVG render, and the backend + PWA skeletons are in place. The agent
-model call and full tool-parity are the next roadmap items.
+Proven on a real production file — the Aldrich 6th-ed. basic set (skirt,
+trousers, bodice, one-piece sleeve):
+
+* Parses all **425 objects** and the multi-size `.vst`.
+* Evaluates **425 / 425 to finite geometry, 0 unresolved** — including
+  `trueDarts` (ported from the Seamly C++ source), `flippingByLine`,
+  `SplPath` arc-length-along-path, `pointOfContact`, `curveIntersectAxis`,
+  `bisector`.
+* Verified numerically against the file: `A1→A9 = 19.00 cm`, matching
+  `waist_circ/4 + 4·#CM`.
+* **Lossless writer round-trip**: 425 objects, 7 pieces, 302 points, 0
+  coordinate differences, byte-identical re-write.
+* All 21 Seamly point tools, 5 curve types, 4 operation tools, and piece
+  creation are implemented and exercised through the action space.
+
+Known gaps are in [DESIGN.md](DESIGN.md#whats-missing).
 
 ## Quick start
 
 ```bash
-# Engine + tests
-cd engine
 pip install -e '.[dev]'
-pytest -q                      # 21 passing
-
-# Evaluate + inspect a pattern
-python -c "
-import seamly_engine as se
-pat = se.load_pattern('tests/fixtures/aldrich_basic.sm2d')
-meas = se.load_measurements('tests/fixtures/aldrich_measurements.vst')
-ev  = se.evaluate_pattern(pat, meas)
-state = se.export_state(pat, ev, meas)
-print(state['coverage'])         # {'total': 425, 'resolved': 425, 'fraction': 1.0, ...}
-"
-
-# Backend + PWA  (from the repo root)
-pip install -r requirements.txt              # PyPI deps (engine runs from PYTHONPATH)
-export ANTHROPIC_API_KEY=sk-ant-...          # enables the VLA agent loop
-PYTHONPATH=engine uvicorn app:app --app-dir backend --port 8000
-# open http://localhost:8000 on your phone/browser
+pytest -q                                  # 57 passing
 ```
 
-Without `ANTHROPIC_API_KEY` the engine, state export, render, and edit/delete
-paths are still fully exercisable; the chat just returns a stub. The agent uses
-`claude-opus-4-8` with adaptive thinking, reasoning over the **structured state**
-(primary) plus the **rendered image** (when a raster backend is present), and
-calls one tool per operation (`edit_formula`, `delete_object`, …).
+Read a pattern and inspect the state a policy would see:
 
-## Deploy on Railway
+```python
+import seamly_engine as se
 
-The repo is Railway-ready (Nixpacks). Push it to a Railway service:
+pat  = se.load_pattern("tests/fixtures/aldrich_basic.sm2d")
+meas = se.load_measurements("tests/fixtures/aldrich_measurements.vst")
+ev   = se.evaluate_pattern(pat, meas)
 
-- `requirements.txt` (root) installs the engine + backend; `Procfile` / `nixpacks.toml`
-  start `uvicorn` bound to `$PORT`.
-- `nixpacks.toml` installs `cairo` so the pattern rasterizes for the vision input.
-  If cairo is ever unavailable the agent falls back to state-only reasoning, so
-  the app still runs.
-- Set the `ANTHROPIC_API_KEY` variable in the Railway service.
+print(se.export_state(pat, ev, meas)["coverage"])
+# {'total': 425, 'resolved': 425, 'fraction': 1.0, ...}
+```
 
-### Persisting your patterns (important)
+Drive it as an environment:
 
-Saved patterns, versions, and chat history live in SQLite at `VLA_DB`
-(default `./data/vla.db`). **Railway's container filesystem is ephemeral**, so to
-keep history across deploys, attach a Volume and point the DB at it:
+```python
+from seamly_engine import TOOLS, dispatch_tool
+from seamly_engine.authoring import new_pattern
+from seamly_engine.operations import PatternSession
+from seamly_engine.state import compact_state
+from seamly_engine.writer import pattern_to_xml
 
-1. Railway service → **Volumes** → add a volume mounted at `/data`.
-2. Set the variable **`VLA_DB=/data/vla.db`**.
+session = PatternSession(new_pattern("Skirt block", with_defaults=False))
 
-Without a volume the app still works, but the library resets on each redeploy.
+observation = compact_state(session.pattern, session.evaluated)   # what a policy sees
+result = dispatch_tool(session, "add_point", {                    # what it does
+    "tool_type": "endLine",
+    "attrs": {"name": "B", "basePoint": "1", "angle": "270", "length": "60"},
+})
+print(result.ok, result.message)                                  # -> True 'added endLine B (#2)'
 
-### Cost controls (Railway variables)
+open("skirt.sm2d", "w").write(pattern_to_xml(session.pattern))    # opens in Seamly2D
+```
 
-**Pick the model per session in the app** (header dropdown) — cheap for simple
-tweaks, strong for hard drafting. The choice is saved with the session:
+`TOOLS` is already in Anthropic tool-use schema form, so wiring a model to it is
+a `messages.create(tools=TOOLS, ...)` call plus a loop over the `tool_use`
+blocks.
 
-| Model | Cost /1M (in-out) | When to use |
-|---|---|---|
-| **Sonnet 5** (default) | $3/$15 (intro $2/$10) | Balanced — adaptive thinking, near-Opus on agentic/tool work |
-| **Opus 4.8** | $5/$25 | Hardest construction/drafting |
-| **Haiku 4.5** | $1/$5 | Cheapest, but **no thinking** — simple edits only |
+## Scope
 
-| Variable | Default | Effect |
-|---|---|---|
-| `VLA_MODEL` | `claude-sonnet-5` | Default model for *new* sessions (the picker overrides per session). |
-| `VLA_VISION_WIDTH` | `700` | Width of the PNG sent to the model. Image tokens scale with pixel area — lower is cheaper. |
-| `VLA_SEND_IMAGE` | `1` | Set to `0` to run **state-only** (no image at all) for the cheapest turns; the structured state is the primary input regardless. |
-| `VLA_MAX_STEPS` | `8` | Max tool-call rounds per turn — caps the worst-case cost of one message. |
+**In:** parsing, formulas, geometry, evaluation, mutation, the action space,
+state export, rendering, writing.
 
-Per-turn payload is also kept small by sending only the *changed objects* after
-each tool call rather than the whole block state.
-
-The PWA is served at `/` and talks to the same origin, so no separate frontend
-deploy is needed.
+**Out:** anything that chooses *which* action to take, and anything that serves
+a UI. Policies, prompts, training, instruction-document ingestion and evaluation
+harnesses live in their own repositories and depend on this one. The dependency
+runs one way, on purpose: this is the part that has to stay correct, and it
+can't be allowed to drift to suit a model.

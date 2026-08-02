@@ -1,100 +1,37 @@
-"""VLA agent loop — Anthropic Messages API with per-operation tools.
+"""The action space: one tool per Seamly2D operation.
 
-Each turn the model receives: the user's instruction, the **structured pattern
-state** (the semantically-tagged representation — the primary input), and, when a
-raster renderer is available, the **rendered image** of the pattern. It then
-calls one tool per Seamly2D operation to edit the pattern via
-:class:`~seamly_engine.operations.PatternSession`, which re-evaluates and rolls
-back on breakage. After each tool call the fresh state is fed back in the
-tool_result so the model always acts on current geometry.
+This is the environment's half of the agent contract. :data:`TOOLS` is the
+JSON-schema description a model is given; :func:`dispatch_tool` is the
+transition function that turns one of its calls into a real mutation on a
+:class:`~seamly_engine.operations.PatternSession`.
 
-This is the Anthropic SDK tool-use loop (not the separate "Claude Agent SDK"
-product, which is a filesystem/coding agent). The model call is gated behind
-``ANTHROPIC_API_KEY`` so the engine/render/edit paths stay runnable offline.
+It lives in the engine rather than alongside a policy because it belongs to the
+environment: what the actions *are*, and what they do to the pattern, is a
+property of Seamly2D — not of whichever model happens to be driving. Any policy
+(a prompted agent, a fine-tuned model, a replay of a document, a human) drives
+the pattern through exactly this surface, so they are all measured on equal
+terms.
+
+Two invariants the rest of the system relies on:
+
+* **Dispatch never raises.** A malformed call comes back as a failed
+  :class:`~seamly_engine.operations.OpResult` carrying the reason, so a policy
+  can read the error and correct itself instead of crashing the episode.
+* **The engine decides what is legal.** Every mutation re-evaluates the pattern
+  and rolls back if the result cannot be computed, and delete is
+  block-and-report. Tools cannot leave the pattern in a broken state.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
-import os
 from typing import Any
 
-log = logging.getLogger("vla.agent")
+from .operations import OpResult, PatternSession
 
-from seamly_engine.operations import OpResult, PatternSession
-from seamly_engine.pieces import scoped_ids
-from seamly_engine.render import render_svg
-from seamly_engine.state import block_state, compact_state
+log = logging.getLogger("seamly_engine.actions")
 
-# Models the UI offers. Sonnet is the default: it has adaptive thinking and
-# near-Opus quality on agentic/tool work at a fraction of the cost. Haiku is the
-# budget option but has no thinking, so it's markedly weaker at multi-step
-# drafting; Opus is the strongest for hard construction work.
-MODELS: list[dict[str, Any]] = [
-    {"id": "claude-sonnet-5", "label": "Sonnet 5",
-     "note": "Balanced — recommended", "thinking": True},
-    {"id": "claude-opus-4-8", "label": "Opus 4.8",
-     "note": "Strongest for hard drafting", "thinking": True},
-    {"id": "claude-haiku-4-5", "label": "Haiku 4.5",
-     "note": "Cheapest — simple edits only", "thinking": False},
-]
-MODEL_IDS = {m["id"] for m in MODELS}
-
-# Default for new sessions; override with the VLA_MODEL env var.
-MODEL = os.getenv("VLA_MODEL", "claude-sonnet-5")
-MAX_ITERATIONS = int(os.getenv("VLA_MAX_STEPS", "8"))
-# Width of the PNG sent to the model. Image tokens scale with pixel area, so this
-# is a direct cost lever; the structured state is the primary input regardless.
-VISION_WIDTH = int(os.getenv("VLA_VISION_WIDTH", "700"))
-SEND_IMAGE = os.getenv("VLA_SEND_IMAGE", "1") != "0"
-
-# Models that accept adaptive thinking. Older/cheaper models (e.g. Haiku 4.5)
-# reject it, so we simply omit the parameter for them.
-_ADAPTIVE_THINKING = ("opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6", "sonnet-5", "fable")
-
-SYSTEM_PROMPT = """\
-You are a VLA (vision-language-action) agent that edits sewing patterns in a \
-headless Seamly2D-compatible engine. You perform **instructed edits** on ONE \
-block (pattern piece) at a time — the user has already chosen which block.
-
-You reason over TWO representations of the current state, not a screenshot alone:
-1. A structured JSON state where every object (point/line/arc/spline) is \
-semantically tagged: `role` (seamline/dart/grainline/drill_hole/construction/…), \
-`construction` vs `final_outline`, `built_from` (dependencies), `dependents` \
-(what breaks if it changes), and `formula` (the raw Seamly expression plus its \
-resolved numeric value). Point objects include resolved `xy` coordinates (cm).
-2. When present, a rendered image: bold strokes are final piece outlines, dimmed \
-strokes are construction geometry, darts are magenta, drill holes teal.
-
-You can do anything the Seamly object model allows, via the tools:
-- ADD geometry: `add_point` (any point tool_type — its schema lists the attrs \
-each needs), `add_line`, `add_curve` (arc / arcWithLength / elArc / spline), \
-`add_dart` (a true dart). Reference existing objects by their integer id from \
-the state; give new points a `name`.
-- EDIT: `edit_object` changes any attribute(s) of an object (a length, angle, \
-radius, or a reference point).
-- DELETE: `delete_object` — block-and-report; if it has dependents the delete is \
-refused and returns the dependent chain (delete those first, or pick another way).
-
-Guidance:
-- Formulas are Seamly expressions. Measurements (e.g. `waist_circ`) and variables \
-(e.g. `#CM`, the cm-scale factor) can be referenced directly. To "let out the \
-waist 2cm", edit the object whose length drives that dimension (e.g. \
-`(waist_circ/4)+4*#CM` → `(waist_circ/4)+4*#CM+2`).
-- To build new structure, add construction points first, then lines/curves/darts \
-between them. Prefer editing the construction object that drives a dimension.
-- Every add/edit auto-re-evaluates and rolls back if the result is invalid; the \
-tool result says whether it failed and why, plus the fresh state.
-
-IMPORTANT: only a successful tool call changes the pattern. Never say you \
-changed something unless you actually called a tool and it returned ok. If the \
-request is a change, you must call a tool; if you can't identify which object to \
-edit from the state, say so and ask rather than pretending.
-
-Work step by step. After the change(s), briefly explain what you did in plain \
-language. Keep it concise."""
+__all__ = ["TOOLS", "POINT_TYPES", "dispatch_tool"]
 
 # --- tool schemas: the full Seamly object model (add / edit / delete) --------
 # Attribute values are Seamly expressions or object-id strings; ids reference
@@ -381,158 +318,3 @@ def _dispatch(session: PatternSession, name: str, args: dict) -> OpResult:
         return session.delete_object(int(args["object_id"]))
     return OpResult(False, f"unknown tool {name!r}")
 
-
-def render_svg_for(session: PatternSession, pieces=None) -> str:
-    """Rich construction SVG scoped to the active block (its pieces + drivers), or
-    the whole pattern if no block is selected."""
-    plist = list(pieces) if pieces else None
-    ids = scoped_ids(session.pattern, plist) if plist else None
-    added = getattr(session, "added_ids", None) or set()
-    if ids is not None and added:
-        ids = ids | added  # keep newly-created geometry visible
-    return render_svg(session.pattern, session.evaluated, width=1000,
-                      object_ids=ids, pieces=plist, highlight_ids=added)
-
-
-def _render_png(session: PatternSession, pieces=None) -> bytes | None:
-    """Rasterize the block to PNG for the vision input. Returns None if no raster
-    backend is installed — the agent then runs state-only (by design)."""
-    if not SEND_IMAGE:
-        return None
-    try:
-        import cairosvg  # optional; needs libcairo at runtime
-    except Exception:
-        return None
-    try:
-        return cairosvg.svg2png(bytestring=render_svg_for(session, pieces).encode(),
-                                output_width=VISION_WIDTH)
-    except Exception:
-        return None
-
-
-def _state_delta(session: PatternSession, pieces, label: str, ids: set[int]) -> dict:
-    """Just the objects touched by a tool call, instead of resending the whole
-    block state after every action (a large per-turn cost)."""
-    state = block_state(session.pattern, session.evaluated, list(pieces or []),
-                        session.measurements, label=label,
-                        extra_ids=getattr(session, "added_ids", None))
-    touched = [o for o in state["objects"] if o["id"] in ids]
-    return {"type": "text",
-            "text": "CHANGED OBJECTS:\n" + json.dumps(touched) if touched
-                    else "No object changes."}
-
-
-def _state_block(session: PatternSession, pieces=None, label: str = "") -> dict:
-    if pieces:
-        state = block_state(session.pattern, session.evaluated, list(pieces),
-                            session.measurements, label=label,
-                            extra_ids=getattr(session, "added_ids", None))
-    else:
-        state = compact_state(session.pattern, session.evaluated, session.measurements)
-    return {"type": "text", "text": "BLOCK STATE (JSON):\n" + json.dumps(state)}
-
-
-def _user_turn(session: PatternSession, user_text: str, pieces=None, label: str = "") -> list[dict]:
-    content: list[dict] = [{"type": "text", "text": user_text},
-                           _state_block(session, pieces, label)]
-    png = _render_png(session, pieces)
-    if png is not None:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": base64.standard_b64encode(png).decode(),
-            },
-        })
-    return content
-
-
-def run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "",
-             model: str | None = None) -> dict:
-    """Run one chat turn on the active block: model reasons over image+state,
-    calls operation tools, returns its final text plus the tool calls it made."""
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        return {
-            "reply": (
-                "⚙️ Agent model not wired yet (set ANTHROPIC_API_KEY). The engine, "
-                "state export, render, and edit/delete operations are live — your "
-                f"message was: “{user_text}”."
-            ),
-            "tool_calls": [],
-        }
-
-    try:
-        return _run_turn(session, user_text, pieces, label, model)
-    except Exception as e:  # noqa: BLE001 — never 500 the request
-        log.exception("agent turn failed")
-        return {"reply": f"⚠️ The agent hit an error: {type(e).__name__}: {e}",
-                "tool_calls": []}
-
-
-def _create(client, messages: list[dict], model: str | None = None):
-    """One model call. Adaptive thinking is only sent to models that support it;
-    if a model rejects it anyway we retry without it rather than failing."""
-    model = model or MODEL
-    kwargs = dict(model=model, max_tokens=8000, system=SYSTEM_PROMPT,
-                  tools=TOOLS, messages=messages)
-    if not any(m in model for m in _ADAPTIVE_THINKING):
-        return client.messages.create(**kwargs)
-    try:
-        return client.messages.create(thinking={"type": "adaptive"}, **kwargs)
-    except Exception as e:  # noqa: BLE001
-        name = type(e).__name__
-        if "BadRequest" not in name and "TypeError" not in name:
-            raise
-        log.warning("adaptive thinking rejected (%s: %s) — retrying without it", name, e)
-        return client.messages.create(**kwargs)
-
-
-def _run_turn(session: PatternSession, user_text: str, pieces=None, label: str = "",
-              model: str | None = None) -> dict:
-    import anthropic
-
-    client = anthropic.Anthropic()
-    messages: list[dict] = [
-        {"role": "user", "content": _user_turn(session, user_text, pieces, label)}]
-    tool_calls: list[dict] = []
-
-    for _ in range(MAX_ITERATIONS):
-        response = _create(client, messages, model)
-        if response.stop_reason != "tool_use":
-            text = "".join(b.text for b in response.content if b.type == "text")
-            if response.stop_reason == "max_tokens" and not text.strip():
-                text = "(ran out of output budget before replying — try a simpler request)"
-            return {"reply": text.strip() or "(no response)", "tool_calls": tool_calls}
-
-        messages.append({"role": "assistant", "content": response.content})
-        results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-            before_added = set(getattr(session, "added_ids", set()))
-            op = dispatch_tool(session, block.name, block.input)
-            tool_calls.append({"tool": block.name, "input": block.input, "ok": op.ok,
-                               "message": op.message})
-            # Feed back the outcome plus ONLY the objects it touched (resending
-            # the whole block state every step is a large, avoidable cost).
-            payload = {"ok": op.ok, "message": op.message}
-            if op.blocked_by:
-                payload["blocked_by"] = op.blocked_by
-            touched = set(getattr(session, "added_ids", set())) - before_added
-            oid = block.input.get("object_id")
-            if isinstance(oid, int):
-                touched.add(oid)
-            results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": [
-                    {"type": "text", "text": json.dumps(payload)},
-                    _state_delta(session, pieces, label, touched),
-                ],
-                "is_error": not op.ok,
-            })
-        messages.append({"role": "user", "content": results})
-
-    return {"reply": "Stopped after reaching the maximum number of edit steps.",
-            "tool_calls": tool_calls}
