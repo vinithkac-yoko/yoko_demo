@@ -72,11 +72,15 @@ def _modeling_xml(db) -> list[str]:
     if raw:
         lines.append("            " + raw)
     for m in new_objs:
-        lines.append(f'            <{m.tag} id="{m.id}" idObject="{m.id_object}"'
-                     f' inUse="true" type="{m.modeling_type}"/>')
+        lines.append(
+            f'            <{m.tag} id="{m.id}" idObject="{m.id_object}"'
+            f' inUse="true" type="{m.modeling_type}"/>'
+        )
     for p in new_paths:
-        lines.append(f'            <path cut="false" id="{p.id}" inUse="true"'
-                     f' lineType={quoteattr(p.line_type)} name={quoteattr(p.name)} type="2">')
+        lines.append(
+            f'            <path cut="false" id="{p.id}" inUse="true"'
+            f' lineType={quoteattr(p.line_type)} name={quoteattr(p.name)} type="2">'
+        )
         lines.append("                <nodes>")
         for nid in p.node_ids:
             lines.append(f'                    <node idObject="{nid}" type="NodePoint"/>')
@@ -98,19 +102,27 @@ def _pieces_xml(pattern: Pattern, db) -> list[str]:
         lines.append("            " + raw)
     for p in new_pieces:
         attrs = dict(p.raw)
-        attrs.update({"id": str(p.id), "name": p.name,
-                      "seamAllowance": "true" if p.seam_allowance else "false",
-                      "width": p.width or "1"})
+        attrs.update(
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "seamAllowance": "true" if p.seam_allowance else "false",
+                "width": p.width or "1",
+            }
+        )
         lines.append(f"            <piece{_attrs(attrs)}>")
         if p.grainline_anchor is not None:
-            lines.append(f'                <grainline arrows="0" centerAnchor="{p.grainline_anchor}"'
-                         f' length="{p.grainline_length or 15}" rotation="{p.grainline_rotation}"'
-                         f' visible="true"/>')
+            lines.append(
+                f'                <grainline arrows="0" centerAnchor="{p.grainline_anchor}"'
+                f' length="{p.grainline_length or 15}" rotation="{p.grainline_rotation}"'
+                f' visible="true"/>'
+            )
         lines.append("                <nodes>")
         for n in p.nodes:
             rev = ' reverse="0"' if n.node_type != "NodePoint" else ""
-            lines.append(f'                    <node idObject="{n.object_id}"{rev}'
-                         f' type="{n.node_type}"/>')
+            lines.append(
+                f'                    <node idObject="{n.object_id}"{rev} type="{n.node_type}"/>'
+            )
         lines.append("                </nodes>")
         if p.internal_path_ids:
             lines.append("                <iPaths>")
@@ -130,7 +142,7 @@ def _pieces_xml(pattern: Pattern, db) -> list[str]:
 def pattern_to_xml(pattern: Pattern) -> str:
     """Return the pattern as a Seamly2D ``.sm2d`` XML document."""
     out: list[str] = ['<?xml version="1.0" encoding="UTF-8"?>', "<pattern>"]
-    out.append(f"    <!--Pattern saved by the VLA pattern engine.-->")
+    out.append("    <!--Pattern saved by the VLA pattern engine.-->")
     out.append(f"    <version>{escape(pattern.version or SM2D_VERSION)}</version>")
     out.append(f"    <unit>{escape(pattern.unit or 'cm')}</unit>")
     out.append(f"    <description>{escape(pattern.description)}</description>")
@@ -147,10 +159,12 @@ def pattern_to_xml(pattern: Pattern) -> str:
 
     out.append("    <increments>")
     for inc in pattern.increments:
-        out.append("        <increment"
-                   f" description={quoteattr(inc.description)}"
-                   f" formula={quoteattr(inc.formula)}"
-                   f" name={quoteattr(inc.name)}/>")
+        out.append(
+            "        <increment"
+            f" description={quoteattr(inc.description)}"
+            f" formula={quoteattr(inc.formula)}"
+            f" name={quoteattr(inc.name)}/>"
+        )
     out.append("    </increments>")
 
     for db in pattern.draft_blocks:

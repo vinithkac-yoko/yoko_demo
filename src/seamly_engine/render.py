@@ -9,7 +9,6 @@ the phone shows. Pure Python string building — no external deps.
 
 from __future__ import annotations
 
-from .geometry import Arc, BezierPath, CubicBezier, Point
 from .model import Evaluated, Pattern
 from .state import export_state
 
@@ -28,10 +27,17 @@ _STYLE = {
 }
 
 
-def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
-               labels: bool = True, padding: float = 4.0,
-               object_ids: set[int] | None = None, pieces=None,
-               highlight_ids: set[int] | None = None) -> str:
+def render_svg(
+    pattern: Pattern,
+    ev: Evaluated,
+    *,
+    width: int = 900,
+    labels: bool = True,
+    padding: float = 4.0,
+    object_ids: set[int] | None = None,
+    pieces=None,
+    highlight_ids: set[int] | None = None,
+) -> str:
     """Rich construction view: all lines/points/curves, construction dimmed,
     final-outline bold, final points labeled. Pass ``object_ids`` to draw only a
     subset (e.g. one block's objects + their construction drivers). Pass
@@ -54,7 +60,8 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
         if not inc(oid):
             continue
         for p in c.polyline(8):
-            xs.append(p.x); ys.append(p.y)
+            xs.append(p.x)
+            ys.append(p.y)
     if not xs:
         return '<svg xmlns="http://www.w3.org/2000/svg"/>'
     minx, maxx = min(xs) - padding, max(xs) + padding
@@ -110,29 +117,36 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
         da = f' stroke-dasharray="{dash}"' if dash else ""
         parts.append(
             f'<line x1="{sx(p1.x):.1f}" y1="{sy(p1.y):.1f}" x2="{sx(p2.x):.1f}" '
-            f'y2="{sy(p2.y):.1f}" stroke="{color}" stroke-width="{w}"{da}/>')
+            f'y2="{sy(p2.y):.1f}" stroke="{color}" stroke-width="{w}"{da}/>'
+        )
 
     # overlay the connected seam outlines + internal paths of the given pieces
     if pieces:
         from . import pieces as P
+
         for pc in pieces:
             outline = P.piece_outline_points(pattern, ev, pc)
             if len(outline) >= 2:
                 d = "M " + " L ".join(f"{sx(p.x):.1f},{sy(p.y):.1f}" for p in outline)
-                parts.append(f'<path d="{d}" fill="none" stroke="#111" '
-                             f'stroke-width="2.4" stroke-linejoin="round"/>')
+                parts.append(
+                    f'<path d="{d}" fill="none" stroke="#111" '
+                    f'stroke-width="2.4" stroke-linejoin="round"/>'
+                )
             for role, _name, pts in P.piece_internal_paths(pattern, ev, pc):
                 color, w, dash = _PATH_STROKE.get(role, _PATH_STROKE["guide"])
                 dd = "M " + " L ".join(f"{sx(p.x):.1f},{sy(p.y):.1f}" for p in pts)
                 da = f' stroke-dasharray="{dash}"' if dash else ""
-                parts.append(f'<path d="{dd}" fill="none" stroke="{color}" '
-                             f'stroke-width="{w}"{da}/>')
+                parts.append(
+                    f'<path d="{dd}" fill="none" stroke="{color}" stroke-width="{w}"{da}/>'
+                )
             grain = P.piece_grainline(pattern, ev, pc)
             if grain:
                 a, b = grain
-                parts.append(f'<line x1="{sx(a.x):.1f}" y1="{sy(a.y):.1f}" '
-                             f'x2="{sx(b.x):.1f}" y2="{sy(b.y):.1f}" '
-                             f'stroke="#16a34a" stroke-width="1.4"/>')
+                parts.append(
+                    f'<line x1="{sx(a.x):.1f}" y1="{sy(a.y):.1f}" '
+                    f'x2="{sx(b.x):.1f}" y2="{sy(b.y):.1f}" '
+                    f'stroke="#16a34a" stroke-width="1.4"/>'
+                )
 
     # points + labels
     for oid, p in ev.points.items():
@@ -143,8 +157,10 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
             name = (nm.raw.get("name", "") if nm else "") or f"#{oid}"
             parts.append(f'<circle cx="{sx(p.x):.1f}" cy="{sy(p.y):.1f}" r="3.2" fill="{_HL}"/>')
             if labels:
-                parts.append(f'<text x="{sx(p.x)+3:.1f}" y="{sy(p.y)-3:.1f}" font-size="8" '
-                             f'fill="{_HL}">{name}</text>')
+                parts.append(
+                    f'<text x="{sx(p.x) + 3:.1f}" y="{sy(p.y) - 3:.1f}" font-size="8" '
+                    f'fill="{_HL}">{name}</text>'
+                )
             continue
         role = role_of.get(oid, "construction")
         is_final = final_of.get(oid)
@@ -156,8 +172,9 @@ def render_svg(pattern: Pattern, ev: Evaluated, *, width: int = 900,
             name = nm.raw.get("name", "") if nm else ""
             if name:
                 parts.append(
-                    f'<text x="{sx(p.x)+3:.1f}" y="{sy(p.y)-3:.1f}" font-size="7" '
-                    f'fill="#444">{name}</text>')
+                    f'<text x="{sx(p.x) + 3:.1f}" y="{sy(p.y) - 3:.1f}" font-size="7" '
+                    f'fill="#444">{name}</text>'
+                )
 
     parts.append("</svg>")
     return "".join(parts)
@@ -178,8 +195,15 @@ _PATH_STROKE = {
 }
 
 
-def render_piece_svg(pattern: Pattern, ev: Evaluated, piece, *, width: int = 900,
-                     labels: bool = True, padding: float = 3.0) -> str:
+def render_piece_svg(
+    pattern: Pattern,
+    ev: Evaluated,
+    piece,
+    *,
+    width: int = 900,
+    labels: bool = True,
+    padding: float = 3.0,
+) -> str:
     """Render ONE piece (block): its real seam/cut outline bold, internal paths
     (darts/drill-holes/guides) styled, grainline drawn, outline vertices labeled.
     Construction scaffolding is intentionally omitted for a clean, legible view.
@@ -223,21 +247,28 @@ def render_piece_svg(pattern: Pattern, ev: Evaluated, piece, *, width: int = 900
         f'<rect width="{width}" height="{height}" fill="#fbfbfb"/>',
     ]
     if outline:
-        parts.append(f'<path d="{path_d(outline)} Z" fill="#eef1f6" stroke="#111" '
-                     f'stroke-width="2.4" stroke-linejoin="round"/>')
+        parts.append(
+            f'<path d="{path_d(outline)} Z" fill="#eef1f6" stroke="#111" '
+            f'stroke-width="2.4" stroke-linejoin="round"/>'
+        )
     for role, _name, pts in ipaths:
         color, w, dash = _PATH_STROKE.get(role, _PATH_STROKE["guide"])
         da = f' stroke-dasharray="{dash}"' if dash else ""
-        parts.append(f'<path d="{path_d(pts)}" fill="none" stroke="{color}" '
-                     f'stroke-width="{w}"{da}/>')
+        parts.append(
+            f'<path d="{path_d(pts)}" fill="none" stroke="{color}" stroke-width="{w}"{da}/>'
+        )
     if grain:
         a, b = grain
-        parts.append(f'<line x1="{sx(a.x):.1f}" y1="{sy(a.y):.1f}" x2="{sx(b.x):.1f}" '
-                     f'y2="{sy(b.y):.1f}" stroke="#16a34a" stroke-width="1.4"/>')
+        parts.append(
+            f'<line x1="{sx(a.x):.1f}" y1="{sy(a.y):.1f}" x2="{sx(b.x):.1f}" '
+            f'y2="{sy(b.y):.1f}" stroke="#16a34a" stroke-width="1.4"/>'
+        )
     for name, p in verts:
         parts.append(f'<circle cx="{sx(p.x):.1f}" cy="{sy(p.y):.1f}" r="2.4" fill="#111"/>')
         if labels and name:
-            parts.append(f'<text x="{sx(p.x)+3:.1f}" y="{sy(p.y)-3:.1f}" font-size="8" '
-                         f'fill="#444">{name}</text>')
+            parts.append(
+                f'<text x="{sx(p.x) + 3:.1f}" y="{sy(p.y) - 3:.1f}" font-size="8" '
+                f'fill="#444">{name}</text>'
+            )
     parts.append("</svg>")
     return "".join(parts)

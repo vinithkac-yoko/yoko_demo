@@ -21,10 +21,11 @@ disambiguated against the set of known names.
 
 from __future__ import annotations
 
+import contextlib
 import math
 
 from . import geometry as geo
-from .formula import FormulaError, Scope, evaluate, identifiers
+from .formula import FormulaError, Scope, evaluate
 from .measurements import MeasurementTable
 from .model import Evaluated, Pattern, PatternObject
 
@@ -33,8 +34,13 @@ class _Unresolved(Exception):
     """Internal: raised when an object cannot be computed this pass."""
 
 
-def evaluate_pattern(pattern: Pattern, measurements: MeasurementTable | None = None,
-                     *, size: float | None = None, height: float | None = None) -> Evaluated:
+def evaluate_pattern(
+    pattern: Pattern,
+    measurements: MeasurementTable | None = None,
+    *,
+    size: float | None = None,
+    height: float | None = None,
+) -> Evaluated:
     ev = Evaluated()
     meas = measurements.resolve(size, height) if measurements else {}
 
@@ -99,17 +105,21 @@ def _resolve_increments(pattern: Pattern, meas: dict[str, float], ev: Evaluated)
         raise FormulaError(f"unknown variable {name!r}")
 
     for inc in pattern.increments:
-        try:
+        # Placeholder variables like '##_USER_VARIABLES_##' are section headers
+        # a drafter uses to organize the list, not real formulas; leave them out
+        # of the resolved table rather than failing the whole pattern.
+        with contextlib.suppress(FormulaError):
             resolve_name(inc.name)
-        except FormulaError:
-            # Placeholder variables like '##_USER_VARIABLES_##' aren't real;
-            # leave them out of the resolved table rather than failing.
-            pass
 
 
 # --- per-object evaluation ---------------------------------------------------
-def _eval_object(obj: PatternObject, objs: dict[int, PatternObject],
-                 meas: dict[str, float], ev: Evaluated, id_of_name: dict[str, int]) -> None:
+def _eval_object(
+    obj: PatternObject,
+    objs: dict[int, PatternObject],
+    meas: dict[str, float],
+    ev: Evaluated,
+    id_of_name: dict[str, int],
+) -> None:
     tag = obj.tag
     if tag == "point":
         _eval_point(obj, objs, meas, ev, id_of_name)
@@ -140,8 +150,13 @@ def _require_points(obj: PatternObject, ev: Evaluated, attrs: list[str]) -> None
             _point(ev, int(v))
 
 
-def _scope_for(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
-               id_of_name: dict[str, int], current_length: float | None) -> Scope:
+def _scope_for(
+    obj: PatternObject,
+    ev: Evaluated,
+    meas: dict[str, float],
+    id_of_name: dict[str, int],
+    current_length: float | None,
+) -> Scope:
     names = set(id_of_name)
 
     def resolve(name: str) -> float:
@@ -159,10 +174,10 @@ def _scope_for(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
             return ev.increment_values[name]
         # pseudo-variables reading live geometry
         if name.startswith("Line_"):
-            a, b = _split_two_names(name[len("Line_"):], names)
+            a, b = _split_two_names(name[len("Line_") :], names)
             return _point(ev, id_of_name[a]).dist(_point(ev, id_of_name[b]))
         if name.startswith("AngleLine_"):
-            a, b = _split_two_names(name[len("AngleLine_"):], names)
+            a, b = _split_two_names(name[len("AngleLine_") :], names)
             return geo.line_angle(_point(ev, id_of_name[a]), _point(ev, id_of_name[b]))
         if name.startswith("RadiusArc_"):
             arc_id = int(name.rsplit("_", 1)[1])
@@ -172,7 +187,7 @@ def _scope_for(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
             return r
         if name.startswith("SplPath_") or name.startswith("Spl_"):
             prefix = "SplPath_" if name.startswith("SplPath_") else "Spl_"
-            a, b = _split_two_names(name[len(prefix):], names)
+            a, b = _split_two_names(name[len(prefix) :], names)
             return _curve_partial_length(ev, id_of_name[a], id_of_name[b])
         raise FormulaError(f"unresolvable variable {name!r}")
 
@@ -224,17 +239,22 @@ def _split_two_names(rest: str, names: set[str]) -> tuple[str, str]:
     underscore if ambiguous."""
     positions = [i for i, c in enumerate(rest) if c == "_"]
     for i in positions:
-        a, b = rest[:i], rest[i + 1:]
+        a, b = rest[:i], rest[i + 1 :]
         if a in names and b in names:
             return a, b
     if positions:
         i = positions[-1]
-        return rest[:i], rest[i + 1:]
+        return rest[:i], rest[i + 1 :]
     raise FormulaError(f"cannot split pseudo-var operands {rest!r}")
 
 
-def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
-                meas: dict[str, float], ev: Evaluated, id_of_name: dict[str, int]) -> None:
+def _eval_point(
+    obj: PatternObject,
+    objs: dict[int, PatternObject],
+    meas: dict[str, float],
+    ev: Evaluated,
+    id_of_name: dict[str, int],
+) -> None:
     t = obj.tool_type
 
     def scope(cl: float | None = None) -> Scope:
@@ -276,7 +296,7 @@ def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
         d1 = geo.unit(p2, p1)
         d2 = geo.unit(p2, p3)
         bis = geo.Point(d1.x + d2.x, d1.y + d2.y)
-        norm = (bis.x ** 2 + bis.y ** 2) ** 0.5
+        norm = (bis.x**2 + bis.y**2) ** 0.5
         if norm < 1e-12:
             raise _Unresolved("degenerate bisector")
         bis = geo.Point(bis.x / norm, bis.y / norm)
@@ -332,8 +352,7 @@ def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
         return
 
     elif t == "lineIntersect":
-        hit = geo.line_intersection(ref("p1Line1"), ref("p2Line1"),
-                                    ref("p1Line2"), ref("p2Line2"))
+        hit = geo.line_intersection(ref("p1Line1"), ref("p2Line1"), ref("p1Line2"), ref("p2Line2"))
         if hit is None:
             raise _Unresolved("lines parallel")
         p = hit
@@ -414,8 +433,9 @@ def _eval_point(obj: PatternObject, objs: dict[int, PatternObject],
     ev.points[obj.id] = p
 
 
-def _eval_arc(obj: PatternObject, meas: dict[str, float], ev: Evaluated,
-              id_of_name: dict[str, int]) -> None:
+def _eval_arc(
+    obj: PatternObject, meas: dict[str, float], ev: Evaluated, id_of_name: dict[str, int]
+) -> None:
     scope = _scope_for(obj, ev, meas, id_of_name, None)
     center = _point(ev, int(obj.raw["center"]))
     radius = evaluate(obj.raw["radius"], scope)
@@ -429,8 +449,9 @@ def _eval_arc(obj: PatternObject, meas: dict[str, float], ev: Evaluated,
     ev.values[obj.id] = {"radius": radius, "angle1": a1, "angle2": a2}
 
 
-def _eval_elarc(obj: PatternObject, meas: dict[str, float], ev: Evaluated,
-                id_of_name: dict[str, int]) -> None:
+def _eval_elarc(
+    obj: PatternObject, meas: dict[str, float], ev: Evaluated, id_of_name: dict[str, int]
+) -> None:
     scope = _scope_for(obj, ev, meas, id_of_name, None)
     center = _point(ev, int(obj.raw["center"]))
     r1 = evaluate(obj.raw["radius1"], scope)
@@ -458,8 +479,9 @@ def _eval_spline(obj: PatternObject, ev: Evaluated) -> None:
         raise _Unresolved(f"spline tool {t!r} not implemented")
 
 
-def _eval_operation(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
-                    id_of_name: dict[str, int]) -> None:
+def _eval_operation(
+    obj: PatternObject, ev: Evaluated, meas: dict[str, float], id_of_name: dict[str, int]
+) -> None:
     """Apply an operation tool, producing destination points from sources:
     rotation, moving (translate), flippingByLine / flippingByAxis (mirror).
     Point sources are transformed; curve/arc sources are on the roadmap."""
@@ -471,16 +493,18 @@ def _eval_operation(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
             center = _point(ev, int(obj.raw["center"]))
             return geo.rotate_point(pt, center, evaluate(obj.raw["angle"], scope))
         if t == "moving":
-            return geo.from_polar(pt, evaluate(obj.raw["angle"], scope),
-                                  evaluate(obj.raw["length"], scope))
+            return geo.from_polar(
+                pt, evaluate(obj.raw["angle"], scope), evaluate(obj.raw["length"], scope)
+            )
         if t == "flippingByLine":
-            return geo.reflect_point(pt, _point(ev, int(obj.raw["p1Line"])),
-                                     _point(ev, int(obj.raw["p2Line"])))
+            return geo.reflect_point(
+                pt, _point(ev, int(obj.raw["p1Line"])), _point(ev, int(obj.raw["p2Line"]))
+            )
         if t == "flippingByAxis":
             c = _point(ev, int(obj.raw["center"]))
             if obj.raw.get("axisType", "vertical").lower().startswith("v"):
-                return geo.Point(2 * c.x - pt.x, pt.y)      # mirror across vertical axis
-            return geo.Point(pt.x, 2 * c.y - pt.y)          # mirror across horizontal axis
+                return geo.Point(2 * c.x - pt.x, pt.y)  # mirror across vertical axis
+            return geo.Point(pt.x, 2 * c.y - pt.y)  # mirror across horizontal axis
         raise _Unresolved(f"operation {t!r} not implemented")
 
     for pair in obj.children:
@@ -497,8 +521,9 @@ def _eval_operation(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
         if curve is None:
             ev.unresolved[did] = f"operation source {src} not resolved"
         elif isinstance(curve, geo.CubicBezier):
-            ev.curves[did] = geo.CubicBezier(*(transform(p) for p in
-                                               (curve.p0, curve.p1, curve.p2, curve.p3)))
+            ev.curves[did] = geo.CubicBezier(
+                *(transform(p) for p in (curve.p0, curve.p1, curve.p2, curve.p3))
+            )
         elif isinstance(curve, geo.BezierPath):
             ev.curves[did] = geo.BezierPath(tuple(transform(p) for p in curve.on_and_controls))
         elif isinstance(curve, geo.Arc):
@@ -506,8 +531,9 @@ def _eval_operation(obj: PatternObject, ev: Evaluated, meas: dict[str, float],
             new_center = transform(curve.center)
             if t == "rotation":
                 delta = evaluate(obj.raw["angle"], scope)
-                ev.curves[did] = geo.Arc(new_center, curve.radius,
-                                         curve.angle1 + delta, curve.angle2 + delta)
+                ev.curves[did] = geo.Arc(
+                    new_center, curve.radius, curve.angle1 + delta, curve.angle2 + delta
+                )
             elif t == "moving":
                 ev.curves[did] = geo.Arc(new_center, curve.radius, curve.angle1, curve.angle2)
             else:  # mirrored: reflect a point on the arc to recover the angles

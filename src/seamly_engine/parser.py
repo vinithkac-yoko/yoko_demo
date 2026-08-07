@@ -22,14 +22,40 @@ from .model import (
 
 # Attributes whose values are object-id references, by element/tool.
 _REF_ATTRS = (
-    "basePoint", "firstPoint", "secondPoint", "thirdPoint",
-    "center", "curve", "p1Line", "p2Line",
-    "baseLineP1", "baseLineP2", "dartP1", "dartP2", "dartP3",
-    "point1", "point2", "point3", "point4",
+    "basePoint",
+    "firstPoint",
+    "secondPoint",
+    "thirdPoint",
+    "center",
+    "curve",
+    "p1Line",
+    "p2Line",
+    "baseLineP1",
+    "baseLineP2",
+    "dartP1",
+    "dartP2",
+    "dartP3",
+    "point1",
+    "point2",
+    "point3",
+    "point4",
     # additional-tool references
-    "p1Line1", "p2Line1", "p1Line2", "p2Line2", "pShoulder",
-    "c1Center", "c2Center", "firstArc", "secondArc", "axisP1", "axisP2",
-    "curve1", "curve2", "cCenter", "tangent", "arc",
+    "p1Line1",
+    "p2Line1",
+    "p1Line2",
+    "p2Line2",
+    "pShoulder",
+    "c1Center",
+    "c2Center",
+    "firstArc",
+    "secondArc",
+    "axisP1",
+    "axisP2",
+    "curve1",
+    "curve2",
+    "cCenter",
+    "tangent",
+    "arc",
 )
 
 
@@ -60,8 +86,17 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
     pat.measurements_file = (root.findtext("measurements") or "").strip()
 
     # Keep root-level elements we don't model (gradation, patternLabel, company…)
-    _MODELLED_ROOT = {"version", "unit", "patternName", "patternNumber", "description",
-                      "notes", "measurements", "increments", "draftBlock"}
+    _MODELLED_ROOT = {
+        "version",
+        "unit",
+        "patternName",
+        "patternNumber",
+        "description",
+        "notes",
+        "measurements",
+        "increments",
+        "draftBlock",
+    }
     for el in root:
         if el.tag not in _MODELLED_ROOT:
             pat.raw_root_sections.append(ET.tostring(el, encoding="unicode").strip())
@@ -69,11 +104,13 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
     inc_root = root.find("increments")
     if inc_root is not None:
         for inc in inc_root.findall("increment"):
-            pat.increments.append(Increment(
-                name=inc.get("name", ""),
-                formula=inc.get("formula", "0"),
-                description=inc.get("description", ""),
-            ))
+            pat.increments.append(
+                Increment(
+                    name=inc.get("name", ""),
+                    formula=inc.get("formula", "0"),
+                    description=inc.get("description", ""),
+                )
+            )
 
     for block in root.findall("draftBlock"):
         db = DraftBlock(name=block.get("name", ""))
@@ -89,11 +126,13 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
                 if el.tag == "path":
                     db.internal_paths.append(_parse_internal_path(el))
                 elif el.get("idObject"):
-                    db.modeling.append(ModelingObject(
-                        id=int(el.get("id", "0")),
-                        id_object=int(el.get("idObject", "0")),
-                        modeling_type=el.get("type", ""),
-                    ))
+                    db.modeling.append(
+                        ModelingObject(
+                            id=int(el.get("id", "0")),
+                            id_object=int(el.get("idObject", "0")),
+                            modeling_type=el.get("type", ""),
+                        )
+                    )
 
         # <pieces>: the final pattern pieces (seam/cut outline + metadata).
         pieces = block.find("pieces")
@@ -108,9 +147,9 @@ def parse_pattern(path_or_text: str, *, is_text: bool = False) -> Pattern:
             el = block.find(name)
             if el is not None:
                 db.raw_sections[name] = "".join(
-                    ET.tostring(child, encoding="unicode").strip() for child in el)
-                db.raw_sections[name + "_ids"] = ",".join(
-                    child.get("id", "") for child in el)
+                    ET.tostring(child, encoding="unicode").strip() for child in el
+                )
+                db.raw_sections[name + "_ids"] = ",".join(child.get("id", "") for child in el)
 
         pat.draft_blocks.append(db)
 
@@ -157,11 +196,15 @@ def _parse_operation(el: ET.Element, attrs: dict[str, str]) -> PatternObject:
     children: list[dict[str, str]] = []
     sources = [dict(i.attrib) for i in el.findall("./source/item")]
     dests = [dict(i.attrib) for i in el.findall("./destination/item")]
-    for src, dst in zip(sources, dests):
-        children.append({
-            "src": src.get("idObject", ""),
-            "dst": dst.get("idObject", ""),
-        })
+    # strict=False on purpose: a malformed operation with mismatched source and
+    # destination counts should lose the unpaired items, not fail the whole file.
+    for src, dst in zip(sources, dests, strict=False):
+        children.append(
+            {
+                "src": src.get("idObject", ""),
+                "dst": dst.get("idObject", ""),
+            }
+        )
     obj = PatternObject(
         id=int(attrs.get("id", "0")),
         tag="operation",
@@ -186,11 +229,13 @@ def _parse_piece(piece_el: ET.Element) -> Piece:
     if nodes is not None:
         for node in nodes.findall("node"):
             oid = node.get("idObject") or node.get("id") or "0"
-            piece.nodes.append(PieceNode(
-                object_id=int(oid) if oid.isdigit() else 0,
-                node_type=node.get("type", ""),
-                reverse=node.get("reverse", "0") == "1",
-            ))
+            piece.nodes.append(
+                PieceNode(
+                    object_id=int(oid) if oid.isdigit() else 0,
+                    node_type=node.get("type", ""),
+                    reverse=node.get("reverse", "0") == "1",
+                )
+            )
     ipaths = piece_el.find("iPaths")
     if ipaths is not None:
         for rec in ipaths.findall("record"):

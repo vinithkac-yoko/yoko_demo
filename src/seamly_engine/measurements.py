@@ -31,8 +31,15 @@ class Measurement:
     height_increase: float = 0.0
     value_formula: str | None = None  # for single-size .vit tables
 
-    def value(self, size: float, height: float, base_size: float, base_height: float,
-              size_step: float, height_step: float) -> float:
+    def value(
+        self,
+        size: float,
+        height: float,
+        base_size: float,
+        base_height: float,
+        size_step: float,
+        height_step: float,
+    ) -> float:
         if self.value_formula is not None:
             # Resolved later by the evaluator (may reference other measurements).
             raise NotImplementedError("formula-valued measurement resolved in evaluator")
@@ -63,8 +70,9 @@ class MeasurementTable:
         for name, m in self.measurements.items():
             if m.value_formula is not None:
                 continue  # handled by evaluator's formula pass
-            out[name] = m.value(s, h, self.base_size, self.base_height,
-                                self.size_step, self.height_step)
+            out[name] = m.value(
+                s, h, self.base_size, self.base_height, self.size_step, self.height_step
+            )
         return out
 
 
@@ -91,7 +99,8 @@ def parse_measurements(path_or_text: str, *, is_text: bool = False) -> Measureme
                 continue
             if m.get("value") is not None:  # single-size .vit form
                 table.measurements[name] = Measurement(
-                    name=name, base=0.0, value_formula=m.get("value"))
+                    name=name, base=0.0, value_formula=m.get("value")
+                )
             else:
                 table.measurements[name] = Measurement(
                     name=name,

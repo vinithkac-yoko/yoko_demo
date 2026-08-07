@@ -37,8 +37,14 @@ class OpResult:
 class PatternSession:
     """A persistent, multi-turn editing session over one pattern."""
 
-    def __init__(self, pattern: Pattern, measurements: MeasurementTable | None = None,
-                 *, size: float | None = None, height: float | None = None):
+    def __init__(
+        self,
+        pattern: Pattern,
+        measurements: MeasurementTable | None = None,
+        *,
+        size: float | None = None,
+        height: float | None = None,
+    ):
         self.pattern = pattern
         self.measurements = measurements
         self.size = size
@@ -47,8 +53,7 @@ class PatternSession:
         self.evaluated: Evaluated = self._evaluate()
 
     def _evaluate(self) -> Evaluated:
-        return evaluate_pattern(self.pattern, self.measurements,
-                                size=self.size, height=self.height)
+        return evaluate_pattern(self.pattern, self.measurements, size=self.size, height=self.height)
 
     # --- inspection ----------------------------------------------------------
     def state(self) -> dict:
@@ -96,8 +101,14 @@ class PatternSession:
             ids.append(pc.id)
         return max(ids) + 1
 
-    def add_object(self, tag: str, tool_type: str, attrs: dict,
-                   children: list[dict] | None = None, block_index: int = 0) -> OpResult:
+    def add_object(
+        self,
+        tag: str,
+        tool_type: str,
+        attrs: dict,
+        children: list[dict] | None = None,
+        block_index: int = 0,
+    ) -> OpResult:
         """Add a new construction object (any Seamly tool type). Assigns a fresh
         id, re-evaluates, and rolls back if the object can't be computed or breaks
         the pattern. ``trueDarts`` automatically reserves two output-point ids."""
@@ -136,14 +147,20 @@ class PatternSession:
             or new_id in new_ev.points
             or new_id in new_ev.curves
             or (tool_type == "trueDarts" and int(raw["point1"]) in new_ev.points)
-            or (tag == "operation" and dest_ids
-                and all(d in new_ev.points or d in new_ev.curves for d in dest_ids))
+            or (
+                tag == "operation"
+                and dest_ids
+                and all(d in new_ev.points or d in new_ev.curves for d in dest_ids)
+            )
         )
         if newly or not resolved_self:
             self.pattern = snapshot
             reason = new_ev.unresolved.get(new_id, "it broke dependent objects")
-            return OpResult(False, f"could not add {tool_type or tag} #{new_id}: {reason}",
-                            blocked_by=sorted(newly))
+            return OpResult(
+                False,
+                f"could not add {tool_type or tag} #{new_id}: {reason}",
+                blocked_by=sorted(newly),
+            )
         self.evaluated = new_ev
         self.added_ids.add(new_id)
         if tool_type == "trueDarts":
@@ -152,10 +169,16 @@ class PatternSession:
         nm = raw.get("name", "")
         return OpResult(True, f"added {tool_type or tag} {nm} (#{new_id})".replace("  ", " "))
 
-    def create_piece(self, name: str, node_ids: list[int], *,
-                     seam_allowance: bool = True, width: str = "1",
-                     internal_paths: list[dict] | None = None,
-                     grainline_anchor: int | None = None) -> OpResult:
+    def create_piece(
+        self,
+        name: str,
+        node_ids: list[int],
+        *,
+        seam_allowance: bool = True,
+        width: str = "1",
+        internal_paths: list[dict] | None = None,
+        grainline_anchor: int | None = None,
+    ) -> OpResult:
         """Define a new cut piece from existing construction objects.
 
         The nodes must be given in outline order (walking the seam), mixing
@@ -167,11 +190,17 @@ class PatternSession:
             return OpResult(False, "a piece needs at least 3 outline nodes")
         snapshot = copy.deepcopy(self.pattern)
         try:
-            piece = build_piece(self.pattern, self._next_id, name, node_ids,
-                                seam_allowance=seam_allowance, width=width,
-                                internal_paths=internal_paths,
-                                grainline_anchor=grainline_anchor)
-        except Exception as e:  # noqa: BLE001
+            piece = build_piece(
+                self.pattern,
+                self._next_id,
+                name,
+                node_ids,
+                seam_allowance=seam_allowance,
+                width=width,
+                internal_paths=internal_paths,
+                grainline_anchor=grainline_anchor,
+            )
+        except Exception as e:
             self.pattern = snapshot
             return OpResult(False, f"could not create piece: {e}")
 
@@ -180,13 +209,15 @@ class PatternSession:
             self.pattern = snapshot
             return OpResult(False, "piece outline could not be resolved from those nodes")
         self.added_ids.update({piece.id} | {n.object_id for n in piece.nodes})
-        return OpResult(True, f"created piece “{name}” (#{piece.id}) "
-                              f"with {len(piece.nodes)} outline nodes")
+        return OpResult(
+            True, f"created piece “{name}” (#{piece.id}) with {len(piece.nodes)} outline nodes"
+        )
 
     def set_variable(self, name: str, formula: str, description: str = "") -> OpResult:
         """Add or update a pattern variable (increment). Re-evaluates and rolls
         back if the new value breaks any formula that uses it."""
         from .model import Increment
+
         before = set(self.evaluated.unresolved)
         snapshot = copy.deepcopy(self.pattern)
         existing = next((i for i in self.pattern.increments if i.name == name), None)
@@ -195,8 +226,9 @@ class PatternSession:
             if description:
                 existing.description = description
         else:
-            self.pattern.increments.append(Increment(name=name, formula=formula,
-                                                     description=description))
+            self.pattern.increments.append(
+                Increment(name=name, formula=formula, description=description)
+            )
         new_ev = self._evaluate()
         if name not in new_ev.increment_values:
             self.pattern = snapshot
@@ -204,8 +236,9 @@ class PatternSession:
         newly = set(new_ev.unresolved) - before
         if newly:
             self.pattern = snapshot
-            return OpResult(False, f"{name}={formula!r} broke {len(newly)} object(s)",
-                            blocked_by=sorted(newly))
+            return OpResult(
+                False, f"{name}={formula!r} broke {len(newly)} object(s)", blocked_by=sorted(newly)
+            )
         self.evaluated = new_ev
         val = round(new_ev.increment_values[name], 4)
         verb = "updated" if existing is not None else "added"
@@ -280,8 +313,9 @@ class PatternSession:
                 blocked_by=sorted(newly_broken),
             )
         self.evaluated = new_ev
-        return OpResult(True, f"set {attr}={new_formula!r} on {self._name(object_id)} "
-                              f"(was {old!r})")
+        return OpResult(
+            True, f"set {attr}={new_formula!r} on {self._name(object_id)} (was {old!r})"
+        )
 
     # --- helpers -------------------------------------------------------------
     def _name(self, oid: int) -> str:

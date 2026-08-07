@@ -7,23 +7,13 @@ build/
 dist/
 .venv/
 venv/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 
-# Env & secrets
-.env
-*.local
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # OS / editor
 .DS_Store
 .idea/
 .vscode/
-
-# Scratch renders
-*.png
-!docs/**/*.png
-scratch/
-
-# generated patterns / renders
-*.sm2d.out

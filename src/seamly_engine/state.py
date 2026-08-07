@@ -20,17 +20,17 @@ Nothing here re-derives geometry; it reads the :class:`Evaluated` result.
 from __future__ import annotations
 
 from .formula import identifiers
-from .geometry import Arc, BezierPath, CubicBezier, Point
+from .geometry import Arc, BezierPath, CubicBezier
 from .measurements import MeasurementTable
 from .model import Evaluated, Pattern
 
 _VISIBLE_LINE = "lineType"
 
 
-def export_state(pattern: Pattern, ev: Evaluated,
-                 measurements: MeasurementTable | None = None) -> dict:
+def export_state(
+    pattern: Pattern, ev: Evaluated, measurements: MeasurementTable | None = None
+) -> dict:
     objs = pattern.all_objects()
-    by_id = {o.id: o for o in objs}
     name_of = {o.id: o.raw.get("name", "") for o in objs if o.raw.get("name")}
 
     # trueDarts output points have their own ids/names declared inline.
@@ -86,8 +86,9 @@ def export_state(pattern: Pattern, ev: Evaluated,
     }
 
 
-def compact_state(pattern: Pattern, ev: Evaluated,
-                  measurements: MeasurementTable | None = None) -> dict:
+def compact_state(
+    pattern: Pattern, ev: Evaluated, measurements: MeasurementTable | None = None
+) -> dict:
     """A token-lean view of the full state for the agent's prompt.
 
     Same semantic tagging as :func:`export_state` but without the heavy per-curve
@@ -114,16 +115,16 @@ def compact_state(pattern: Pattern, ev: Evaluated,
             rec["xy"] = [g["x"], g["y"]]
         if o["formula"]:
             rec["formula"] = {
-                k: {"raw": v["raw"], "value": v.get("resolved")}
-                for k, v in o["formula"].items()
+                k: {"raw": v["raw"], "value": v.get("resolved")} for k, v in o["formula"].items()
             }
         objs.append(rec)
     return {
         "pattern": full["pattern"],
         "measurements": full["measurements"],
         "variables": {k: v["value"] for k, v in full["variables"].items()},
-        "pieces": [{"name": p["name"], "objects": len(p["outline_object_ids"])}
-                   for p in full["pieces"]],
+        "pieces": [
+            {"name": p["name"], "objects": len(p["outline_object_ids"])} for p in full["pieces"]
+        ],
         "coverage": {k: full["coverage"][k] for k in ("total", "resolved", "fraction")},
         "objects": objs,
     }
@@ -132,9 +133,14 @@ def compact_state(pattern: Pattern, ev: Evaluated,
 def list_pieces(pattern: Pattern) -> list[dict]:
     """Individual pieces (front/back). See :func:`list_blocks` for garment-level."""
     from .pieces import piece_calc_ids
+
     return [
-        {"id": p.id, "name": p.name, "seam_allowance": p.seam_allowance,
-         "object_count": len(piece_calc_ids(pattern, p))}
+        {
+            "id": p.id,
+            "name": p.name,
+            "seam_allowance": p.seam_allowance,
+            "object_count": len(piece_calc_ids(pattern, p)),
+        }
         for p in pattern.pieces
     ]
 
@@ -143,24 +149,36 @@ def list_blocks(pattern: Pattern) -> list[dict]:
     """The **blocks** (garments: Skirt / Trousers / Bodice / Sleeve) the user can
     choose to work on. Each groups its front/back pieces."""
     from .pieces import group_pieces, pieces_for_key, scoped_ids
+
     out = []
     for g in group_pieces(pattern):
         ps = pieces_for_key(pattern, g["key"])
-        out.append({
-            "key": g["key"], "label": g["label"], "pieces": g["pieces"],
-            "object_count": len(scoped_ids(pattern, ps)),
-        })
+        out.append(
+            {
+                "key": g["key"],
+                "label": g["label"],
+                "pieces": g["pieces"],
+                "object_count": len(scoped_ids(pattern, ps)),
+            }
+        )
     return out
 
 
-def block_state(pattern: Pattern, ev: Evaluated, target_pieces,
-                measurements: MeasurementTable | None = None, *, label: str = "",
-                extra_ids: set[int] | None = None) -> dict:
+def block_state(
+    pattern: Pattern,
+    ev: Evaluated,
+    target_pieces,
+    measurements: MeasurementTable | None = None,
+    *,
+    label: str = "",
+    extra_ids: set[int] | None = None,
+) -> dict:
     """Compact state scoped to a block (one or more pieces): their real objects
     plus the construction geometry that drives them. Much smaller than the whole
     pattern and focuses the agent on one block. ``extra_ids`` (e.g. objects the
     agent just created) are always included so new geometry is visible."""
     from .pieces import scoped_ids
+
     relevant = scoped_ids(pattern, list(target_pieces))
     if extra_ids:
         relevant = relevant | set(extra_ids)
@@ -176,8 +194,9 @@ def block_state(pattern: Pattern, ev: Evaluated, target_pieces,
     }
 
 
-def piece_state(pattern: Pattern, ev: Evaluated, piece,
-                measurements: MeasurementTable | None = None) -> dict:
+def piece_state(
+    pattern: Pattern, ev: Evaluated, piece, measurements: MeasurementTable | None = None
+) -> dict:
     """State scoped to a single piece (kept for the single-piece path/tests)."""
     return block_state(pattern, ev, [piece], measurements, label=piece.name)
 
@@ -320,17 +339,26 @@ def _geometry_of(o, ev: Evaluated) -> dict | None:
 def _curve_geometry(curve) -> dict:
     poly = [[round(p.x, 4), round(p.y, 4)] for p in curve.polyline()]
     if isinstance(curve, Arc):
-        return {"type": "arc", "center": [curve.center.x, curve.center.y],
-                "radius": curve.radius, "angle1": curve.angle1, "angle2": curve.angle2,
-                "polyline": poly}
+        return {
+            "type": "arc",
+            "center": [curve.center.x, curve.center.y],
+            "radius": curve.radius,
+            "angle1": curve.angle1,
+            "angle2": curve.angle2,
+            "polyline": poly,
+        }
     if isinstance(curve, CubicBezier):
-        return {"type": "cubic_bezier",
-                "control_points": [[c.x, c.y] for c in (curve.p0, curve.p1, curve.p2, curve.p3)],
-                "polyline": poly}
+        return {
+            "type": "cubic_bezier",
+            "control_points": [[c.x, c.y] for c in (curve.p0, curve.p1, curve.p2, curve.p3)],
+            "polyline": poly,
+        }
     if isinstance(curve, BezierPath):
-        return {"type": "bezier_path",
-                "control_points": [[c.x, c.y] for c in curve.on_and_controls],
-                "polyline": poly}
+        return {
+            "type": "bezier_path",
+            "control_points": [[c.x, c.y] for c in curve.on_and_controls],
+            "polyline": poly,
+        }
     return {"type": "curve", "polyline": poly}
 
 

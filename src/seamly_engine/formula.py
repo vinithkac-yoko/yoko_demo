@@ -17,8 +17,8 @@ parser + evaluator); it knows nothing about geometry itself.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 # --- identifier characters ---------------------------------------------------
 # Seamly identifiers include letters, digits, '_', and '#' (increment prefix,
@@ -44,18 +44,39 @@ def _adeg(fn: Callable[[float], float]) -> Callable[[float], float]:
 
 
 FUNCTIONS: dict[str, tuple[int, Callable[..., float]]] = {
-    "sin": (1, math.sin), "cos": (1, math.cos), "tan": (1, math.tan),
-    "asin": (1, math.asin), "acos": (1, math.acos), "atan": (1, math.atan),
-    "sinh": (1, math.sinh), "cosh": (1, math.cosh), "tanh": (1, math.tanh),
-    "asinh": (1, math.asinh), "acosh": (1, math.acosh), "atanh": (1, math.atanh),
-    "sinD": (1, _deg(math.sin)), "cosD": (1, _deg(math.cos)), "tanD": (1, _deg(math.tan)),
-    "asinD": (1, _adeg(math.asin)), "acosD": (1, _adeg(math.acos)), "atanD": (1, _adeg(math.atan)),
-    "log": (1, math.log10), "log10": (1, math.log10), "log2": (1, math.log2),
-    "ln": (1, math.log), "exp": (1, math.exp), "sqrt": (1, math.sqrt),
-    "abs": (1, abs), "sign": (1, lambda x: (x > 0) - (x < 0)), "rint": (1, lambda x: float(round(x))),
-    "fmod": (2, math.fmod), "atan2": (2, lambda y, x: math.atan2(y, x)),
-    "degTorad": (1, math.radians), "radTodeg": (1, math.degrees),
-    "min": (-1, min), "max": (-1, max),
+    "sin": (1, math.sin),
+    "cos": (1, math.cos),
+    "tan": (1, math.tan),
+    "asin": (1, math.asin),
+    "acos": (1, math.acos),
+    "atan": (1, math.atan),
+    "sinh": (1, math.sinh),
+    "cosh": (1, math.cosh),
+    "tanh": (1, math.tanh),
+    "asinh": (1, math.asinh),
+    "acosh": (1, math.acosh),
+    "atanh": (1, math.atanh),
+    "sinD": (1, _deg(math.sin)),
+    "cosD": (1, _deg(math.cos)),
+    "tanD": (1, _deg(math.tan)),
+    "asinD": (1, _adeg(math.asin)),
+    "acosD": (1, _adeg(math.acos)),
+    "atanD": (1, _adeg(math.atan)),
+    "log": (1, math.log10),
+    "log10": (1, math.log10),
+    "log2": (1, math.log2),
+    "ln": (1, math.log),
+    "exp": (1, math.exp),
+    "sqrt": (1, math.sqrt),
+    "abs": (1, abs),
+    "sign": (1, lambda x: (x > 0) - (x < 0)),
+    "rint": (1, lambda x: float(round(x))),
+    "fmod": (2, math.fmod),
+    "atan2": (2, lambda y, x: math.atan2(y, x)),
+    "degTorad": (1, math.radians),
+    "radTodeg": (1, math.degrees),
+    "min": (-1, min),
+    "max": (-1, max),
     "sum": (-1, lambda *a: sum(a)),
     "avg": (-1, lambda *a: sum(a) / len(a) if a else 0.0),
 }
@@ -100,7 +121,7 @@ def tokenize(src: str) -> list[_Tok]:
             i = j
             continue
         # multi-char operators first
-        two = src[i:i + 2]
+        two = src[i : i + 2]
         if two in ("<=", ">=", "==", "!=", "&&", "||"):
             toks.append(_Tok("op", two))
             i += 2
@@ -110,11 +131,17 @@ def tokenize(src: str) -> list[_Tok]:
             i += 1
             continue
         if c == "(":
-            toks.append(_Tok("lparen", c)); i += 1; continue
+            toks.append(_Tok("lparen", c))
+            i += 1
+            continue
         if c == ")":
-            toks.append(_Tok("rparen", c)); i += 1; continue
+            toks.append(_Tok("rparen", c))
+            i += 1
+            continue
         if c == ",":
-            toks.append(_Tok("comma", c)); i += 1; continue
+            toks.append(_Tok("comma", c))
+            i += 1
+            continue
         raise FormulaError(f"unexpected character {c!r} in formula {src!r}")
     return toks
 
@@ -162,10 +189,18 @@ class Call(Node):
 
 # Binary operator precedence (higher binds tighter). Ternary handled separately.
 _PRECEDENCE = {
-    "||": 1, "&&": 2,
-    "==": 3, "!=": 3, "<": 3, ">": 3, "<=": 3, ">=": 3,
-    "+": 4, "-": 4,
-    "*": 5, "/": 5,
+    "||": 1,
+    "&&": 2,
+    "==": 3,
+    "!=": 3,
+    "<": 3,
+    ">": 3,
+    "<=": 3,
+    ">=": 3,
+    "+": 4,
+    "-": 4,
+    "*": 5,
+    "/": 5,
     "^": 6,
 }
 _RIGHT_ASSOC = {"^"}
@@ -291,25 +326,38 @@ def _eval(node: Node, scope: Scope) -> float:
         l = _eval(node.left, scope)
         r = _eval(node.right, scope)
         op = node.op
-        if op == "+": return l + r
-        if op == "-": return l - r
-        if op == "*": return l * r
+        if op == "+":
+            return l + r
+        if op == "-":
+            return l - r
+        if op == "*":
+            return l * r
         if op == "/":
             if r == 0:
                 raise FormulaError("division by zero")
             return l / r
-        if op == "^": return math.pow(l, r)
-        if op == "<": return 1.0 if l < r else 0.0
-        if op == ">": return 1.0 if l > r else 0.0
-        if op == "<=": return 1.0 if l <= r else 0.0
-        if op == ">=": return 1.0 if l >= r else 0.0
-        if op == "==": return 1.0 if l == r else 0.0
-        if op == "!=": return 1.0 if l != r else 0.0
-        if op == "&&": return 1.0 if (l != 0 and r != 0) else 0.0
-        if op == "||": return 1.0 if (l != 0 or r != 0) else 0.0
+        if op == "^":
+            return math.pow(l, r)
+        if op == "<":
+            return 1.0 if l < r else 0.0
+        if op == ">":
+            return 1.0 if l > r else 0.0
+        if op == "<=":
+            return 1.0 if l <= r else 0.0
+        if op == ">=":
+            return 1.0 if l >= r else 0.0
+        if op == "==":
+            return 1.0 if l == r else 0.0
+        if op == "!=":
+            return 1.0 if l != r else 0.0
+        if op == "&&":
+            return 1.0 if (l != 0 and r != 0) else 0.0
+        if op == "||":
+            return 1.0 if (l != 0 or r != 0) else 0.0
         raise FormulaError(f"unknown operator {op!r}")
     if isinstance(node, Ternary):
-        return _eval(node.if_true, scope) if _eval(node.cond, scope) != 0 else _eval(node.if_false, scope)
+        branch = node.if_true if _eval(node.cond, scope) != 0 else node.if_false
+        return _eval(branch, scope)
     if isinstance(node, Call):
         arity, fn = FUNCTIONS[node.name]
         args = [_eval(a, scope) for a in node.args]
@@ -354,9 +402,12 @@ def identifiers(src: str) -> set[str]:
         elif isinstance(node, Unary):
             walk(node.operand)
         elif isinstance(node, Binary):
-            walk(node.left); walk(node.right)
+            walk(node.left)
+            walk(node.right)
         elif isinstance(node, Ternary):
-            walk(node.cond); walk(node.if_true); walk(node.if_false)
+            walk(node.cond)
+            walk(node.if_true)
+            walk(node.if_false)
         elif isinstance(node, Call):
             for a in node.args:
                 walk(a)

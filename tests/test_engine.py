@@ -14,8 +14,8 @@ import pytest
 
 import seamly_engine as se
 from seamly_engine import formula
-from seamly_engine.formula import Scope
 from seamly_engine import geometry as geo
+from seamly_engine.formula import Scope
 
 FIX = Path(__file__).parent / "fixtures"
 PATTERN = FIX / "aldrich_basic.sm2d"
@@ -83,8 +83,12 @@ def test_parse_structure(evaluated):
     assert len(pat.increments) == 17
     assert len(pat.all_objects()) == 425
     assert [p.name for p in pat.pieces] == [
-        "A - Skirt Back", "A - Skirt Front", "B - Trousers Front",
-        "B - Trousers Back", "C - Bodice Back", "C - Bodice Front",
+        "A - Skirt Back",
+        "A - Skirt Front",
+        "B - Trousers Front",
+        "B - Trousers Back",
+        "C - Bodice Back",
+        "C - Bodice Front",
         "D - 1 Piece Sleeve",
     ]
 
@@ -98,7 +102,7 @@ def test_increments_resolved_correctly(evaluated):
 
 # --- full DAG evaluation -----------------------------------------------------
 def test_full_pattern_resolves(evaluated):
-    pat, _, ev = evaluated
+    _pat, _, ev = evaluated
     # Every object in the real pattern must evaluate to finite geometry.
     assert ev.unresolved == {}
     for oid, p in ev.points.items():
@@ -122,13 +126,13 @@ def test_measurement_driven_distance(evaluated):
 
 
 def test_true_darts_outputs_registered(evaluated):
-    pat, _, ev = evaluated
+    _pat, _, ev = evaluated
     # trueDarts element 190 emits points 191 (Bba) and 192 (Bca).
     assert 191 in ev.points and 192 in ev.points
 
 
 def test_flipping_operation_creates_destination(evaluated):
-    pat, _, ev = evaluated
+    _pat, _, ev = evaluated
     # operation 570 mirrors source 569 to destination 571.
     assert 571 in ev.points
 
@@ -160,6 +164,7 @@ def test_state_export_has_dependents_for_delete(evaluated):
 
 def test_state_export_is_json_serializable(evaluated):
     import json
+
     pat, meas, ev = evaluated
     state = se.export_state(pat, ev, meas)
     assert json.loads(json.dumps(state))["pattern"]["unit"] == "cm"
@@ -168,6 +173,7 @@ def test_state_export_is_json_serializable(evaluated):
 # --- mutation layer ----------------------------------------------------------
 def _session():
     from seamly_engine.operations import PatternSession
+
     return PatternSession(se.load_pattern(str(PATTERN)), se.load_measurements(str(MEAS)))
 
 
@@ -180,8 +186,11 @@ def test_delete_blocks_and_reports_dependents():
 
 def test_delete_leaf_succeeds():
     sess = _session()
-    leaf = next(o.id for o in reversed(sess.pattern.all_objects())
-                if o.tag == "line" and not sess.dependents_of(o.id))
+    leaf = next(
+        o.id
+        for o in reversed(sess.pattern.all_objects())
+        if o.tag == "line" and not sess.dependents_of(o.id)
+    )
     res = sess.delete_object(leaf)
     assert res.ok is True
     assert leaf not in sess.pattern.object_by_id()
@@ -209,11 +218,16 @@ def test_edit_formula_rolls_back_on_break():
 # --- blocks / pieces ---------------------------------------------------------
 def test_list_pieces(evaluated):
     from seamly_engine.state import list_pieces
+
     pat, _, _ = evaluated
     names = [p["name"] for p in list_pieces(pat)]
     assert names == [
-        "A - Skirt Back", "A - Skirt Front", "B - Trousers Front",
-        "B - Trousers Back", "C - Bodice Back", "C - Bodice Front",
+        "A - Skirt Back",
+        "A - Skirt Front",
+        "B - Trousers Front",
+        "B - Trousers Back",
+        "C - Bodice Back",
+        "C - Bodice Front",
         "D - 1 Piece Sleeve",
     ]
     assert all(p["object_count"] > 0 for p in list_pieces(pat))
@@ -221,6 +235,7 @@ def test_list_pieces(evaluated):
 
 def test_piece_state_is_scoped(evaluated):
     from seamly_engine.state import compact_state, piece_state
+
     pat, meas, ev = evaluated
     piece = next(p for p in pat.pieces if p.name == "C - Bodice Front")
     ps = piece_state(pat, ev, piece, meas)
@@ -233,6 +248,7 @@ def test_piece_state_is_scoped(evaluated):
 
 def test_render_piece_svg_draws_outline(evaluated):
     from seamly_engine.render import render_piece_svg
+
     pat, _, ev = evaluated
     piece = next(p for p in pat.pieces if p.name == "C - Bodice Front")
     svg = render_piece_svg(pat, ev, piece, width=600)
@@ -252,8 +268,9 @@ def _new_id(res):
 def test_add_point_computes_geometry():
     sess = _session()
     ids = _ids(sess)
-    res = sess.add_object("point", "endLine",
-                          {"basePoint": ids["A1"], "angle": "0", "length": "3", "name": "NEW"})
+    res = sess.add_object(
+        "point", "endLine", {"basePoint": ids["A1"], "angle": "0", "length": "3", "name": "NEW"}
+    )
     assert res.ok, res.message
     a1 = sess.evaluated.points[ids["A1"]]
     new = sess.evaluated.points[_new_id(res)]
@@ -265,10 +282,19 @@ def test_add_dart_creates_two_points():
     sess = _session()
     ids = _ids(sess)
     n0 = len(sess.evaluated.points)
-    res = sess.add_object("point", "trueDarts", {
-        "baseLineP1": ids["A1"], "baseLineP2": ids["A9"],
-        "dartP1": ids["A11"], "dartP2": ids["A13"], "dartP3": ids["A12"],
-        "name1": "DL", "name2": "DR"})
+    res = sess.add_object(
+        "point",
+        "trueDarts",
+        {
+            "baseLineP1": ids["A1"],
+            "baseLineP2": ids["A9"],
+            "dartP1": ids["A11"],
+            "dartP2": ids["A13"],
+            "dartP3": ids["A12"],
+            "name1": "DL",
+            "name2": "DR",
+        },
+    )
     assert res.ok, res.message
     assert len(sess.evaluated.points) == n0 + 2
 
@@ -277,8 +303,9 @@ def test_add_invalid_rolls_back():
     sess = _session()
     ids = _ids(sess)
     n0 = len(sess.evaluated.points)
-    res = sess.add_object("point", "endLine",
-                          {"basePoint": ids["A1"], "angle": "0", "length": "nope", "name": "BAD"})
+    res = sess.add_object(
+        "point", "endLine", {"basePoint": ids["A1"], "angle": "0", "length": "nope", "name": "BAD"}
+    )
     assert res.ok is False
     assert len(sess.evaluated.points) == n0  # nothing added
 
@@ -293,11 +320,12 @@ def test_edit_object_generic():
 
 def test_geometry_helpers():
     from seamly_engine import geometry as g
+
     foot = g.foot_of_perpendicular(g.Point(0, -5), g.Point(-3, 0), g.Point(3, 0))
     assert math.isclose(foot.x, 0, abs_tol=1e-9) and math.isclose(foot.y, 0, abs_tol=1e-9)
     pts = g.circle_circle_intersections(g.Point(0, 0), 5, g.Point(6, 0), 5)
     assert len(pts) == 2 and math.isclose(pts[0].x, 3, abs_tol=1e-9)
-    r = g.rotate_point(g.Point(1, 0), g.Point(0, 0), 90)  # visual CCW 90° → up (−y)
+    r = g.rotate_point(g.Point(1, 0), g.Point(0, 0), 90)  # visual CCW 90 deg -> up (-y)
     assert math.isclose(r.x, 0, abs_tol=1e-9) and math.isclose(r.y, -1, abs_tol=1e-9)
 
 
@@ -306,26 +334,32 @@ def test_operations_transform_points_and_curves():
     sess = _session()
     ids = _ids(sess)
     n0 = len(sess.evaluated.points)
-    mirror = sess.add_object("operation", "flippingByLine",
-                             {"p1Line": str(ids["A1"]), "p2Line": str(ids["A3"]), "suffix": "_m"},
-                             children=[{"src": str(ids["A11"])}, {"src": str(ids["A12"])}])
+    mirror = sess.add_object(
+        "operation",
+        "flippingByLine",
+        {"p1Line": str(ids["A1"]), "p2Line": str(ids["A3"]), "suffix": "_m"},
+        children=[{"src": str(ids["A11"])}, {"src": str(ids["A12"])}],
+    )
     assert mirror.ok, mirror.message
-    assert len(sess.evaluated.points) == n0 + 2          # one copy per source
+    assert len(sess.evaluated.points) == n0 + 2  # one copy per source
 
     # a mirrored point is the reflection of its source
     src = sess.evaluated.points[ids["A11"]]
     axis_a, axis_b = sess.evaluated.points[ids["A1"]], sess.evaluated.points[ids["A3"]]
     expect = geo.reflect_point(src, axis_a, axis_b)
-    copies = [sess.evaluated.points[i] for i in sorted(sess.added_ids)
-              if i in sess.evaluated.points]
-    assert any(math.isclose(c.x, expect.x, abs_tol=1e-6) and
-               math.isclose(c.y, expect.y, abs_tol=1e-6) for c in copies)
+    copies = [
+        sess.evaluated.points[i] for i in sorted(sess.added_ids) if i in sess.evaluated.points
+    ]
+    assert any(
+        math.isclose(c.x, expect.x, abs_tol=1e-6) and math.isclose(c.y, expect.y, abs_tol=1e-6)
+        for c in copies
+    )
 
     # curves transform too
     ncurves = len(sess.evaluated.curves)
-    res = sess.add_object("operation", "rotation",
-                          {"center": str(ids["A1"]), "angle": "20"},
-                          children=[{"src": "31"}])          # a cubicBezier
+    res = sess.add_object(
+        "operation", "rotation", {"center": str(ids["A1"]), "angle": "20"}, children=[{"src": "31"}]
+    )  # a cubicBezier
     assert res.ok, res.message
     assert len(sess.evaluated.curves) == ncurves + 1
 
@@ -334,42 +368,61 @@ def test_rotation_and_move_geometry():
     sess = _session()
     ids = _ids(sess)
     base = sess.evaluated.points[ids["A11"]]
-    res = sess.add_object("operation", "moving", {"angle": "0", "length": "5"},
-                          children=[{"src": str(ids["A11"])}])
+    res = sess.add_object(
+        "operation", "moving", {"angle": "0", "length": "5"}, children=[{"src": str(ids["A11"])}]
+    )
     assert res.ok
     moved = [sess.evaluated.points[i] for i in sess.added_ids if i in sess.evaluated.points]
-    assert any(math.isclose(m.x, base.x + 5, abs_tol=1e-6) and
-               math.isclose(m.y, base.y, abs_tol=1e-6) for m in moved)
+    assert any(
+        math.isclose(m.x, base.x + 5, abs_tol=1e-6) and math.isclose(m.y, base.y, abs_tol=1e-6)
+        for m in moved
+    )
 
 
 def test_new_point_tools():
     sess = _session()
     ids = _ids(sess)
-    tri = sess.add_object("point", "triangle",
-                          {"axisP1": str(ids["A1"]), "axisP2": str(ids["A2"]),
-                           "firstPoint": str(ids["A11"]), "secondPoint": str(ids["A12"]),
-                           "name": "TRI"})
+    tri = sess.add_object(
+        "point",
+        "triangle",
+        {
+            "axisP1": str(ids["A1"]),
+            "axisP2": str(ids["A2"]),
+            "firstPoint": str(ids["A11"]),
+            "secondPoint": str(ids["A12"]),
+            "name": "TRI",
+        },
+    )
     assert tri.ok, tri.message
-    tan = sess.add_object("point", "pointFromCircleAndTangent",
-                          {"cCenter": str(ids["A1"]), "cRadius": "5",
-                           "tangent": str(ids["A3"]), "crossPoint": "1", "name": "TAN"})
+    tan = sess.add_object(
+        "point",
+        "pointFromCircleAndTangent",
+        {
+            "cCenter": str(ids["A1"]),
+            "cRadius": "5",
+            "tangent": str(ids["A3"]),
+            "crossPoint": "1",
+            "name": "TAN",
+        },
+    )
     assert tan.ok, tan.message
 
 
 def test_geometry_tangents_and_triangle():
     pts = geo.contact_points(geo.Point(10, 0), geo.Point(0, 0), 5)
     assert len(pts) == 2
-    for p in pts:                       # on the circle, and tangent (radius ⟂ line)
+    for p in pts:  # on the circle, and tangent (radius ⟂ line)
         assert math.isclose(geo.Point(0, 0).dist(p), 5, abs_tol=1e-9)
         assert math.isclose(p.x * (10 - p.x) + p.y * (0 - p.y), 0, abs_tol=1e-6)
-    assert geo.contact_points(geo.Point(1, 0), geo.Point(0, 0), 5) == []   # inside
+    assert geo.contact_points(geo.Point(1, 0), geo.Point(0, 0), 5) == []  # inside
 
     a, b = geo.Point(5, -6), geo.Point(15, 6)
     t = geo.triangle_point(geo.Point(0, 0), geo.Point(20, 0), a, b)
-    assert a.dist(b) ** 2 <= t.dist(a) ** 2 + t.dist(b) ** 2 + 1e-6        # right angle
+    assert a.dist(b) ** 2 <= t.dist(a) ** 2 + t.dist(b) ** 2 + 1e-6  # right angle
 
-    cross = geo.polyline_intersections([geo.Point(0, 0), geo.Point(10, 10)],
-                                       [geo.Point(0, 10), geo.Point(10, 0)])
+    cross = geo.polyline_intersections(
+        [geo.Point(0, 0), geo.Point(10, 10)], [geo.Point(0, 10), geo.Point(10, 0)]
+    )
     assert len(cross) == 1 and math.isclose(cross[0].x, 5) and math.isclose(cross[0].y, 5)
 
 

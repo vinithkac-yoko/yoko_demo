@@ -45,8 +45,8 @@ class PatternObject:
 class DraftBlock:
     name: str
     objects: list[PatternObject] = field(default_factory=list)
-    modeling: list["ModelingObject"] = field(default_factory=list)
-    internal_paths: list["InternalPath"] = field(default_factory=list)
+    modeling: list[ModelingObject] = field(default_factory=list)
+    internal_paths: list[InternalPath] = field(default_factory=list)
     # Raw XML of sections we parse but don't mutate (modeling / pieces / groups),
     # kept verbatim so writing an imported pattern round-trips faithfully.
     raw_sections: dict[str, str] = field(default_factory=dict)

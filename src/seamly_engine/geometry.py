@@ -24,18 +24,18 @@ class Point:
     x: float
     y: float
 
-    def __add__(self, o: "Point") -> "Point":
+    def __add__(self, o: Point) -> Point:
         return Point(self.x + o.x, self.y + o.y)
 
-    def __sub__(self, o: "Point") -> "Point":
+    def __sub__(self, o: Point) -> Point:
         return Point(self.x - o.x, self.y - o.y)
 
-    def __mul__(self, k: float) -> "Point":
+    def __mul__(self, k: float) -> Point:
         return Point(self.x * k, self.y * k)
 
     __rmul__ = __mul__
 
-    def dist(self, o: "Point") -> float:
+    def dist(self, o: Point) -> float:
         return math.hypot(self.x - o.x, self.y - o.y)
 
     def as_tuple(self) -> tuple[float, float]:
@@ -116,11 +116,10 @@ class Arc:
 
     def polyline(self, steps: int = 64) -> list[Point]:
         a1, a2 = self.angle1, self.angle2
-        # Sweep the short way that respects the stored ordering; full circle if equal.
-        if abs((a2 - a1) % 360.0) < 1e-9 and a2 != a1:
-            span = a2 - a1
-        else:
-            span = (a2 - a1)
+        # Sweep from angle1 to angle2 in the stored direction. Note that equal
+        # angles give a degenerate zero-length arc rather than a full circle;
+        # no pattern seen so far stores one that way. See DESIGN.md.
+        span = a2 - a1
         pts = []
         for i in range(steps + 1):
             pts.append(self.point_at(a1 + span * i / steps))
@@ -225,8 +224,10 @@ def point_at_arclength(poly: list[Point], s: float) -> Point:
         seg = poly[i].dist(poly[i + 1])
         if acc + seg >= s:
             t = (s - acc) / seg if seg else 0.0
-            return Point(poly[i].x + t * (poly[i + 1].x - poly[i].x),
-                         poly[i].y + t * (poly[i + 1].y - poly[i].y))
+            return Point(
+                poly[i].x + t * (poly[i + 1].x - poly[i].x),
+                poly[i].y + t * (poly[i + 1].y - poly[i].y),
+            )
         acc += seg
     return poly[-1]
 
@@ -284,10 +285,10 @@ def contact_points(p: Point, center: Point, radius: float) -> list[Point]:
     point-from-arc/circle-and-tangent tools.
     """
     d = p.dist(center)
-    if d < radius:          # inside the circle: no tangent
+    if d < radius:  # inside the circle: no tangent
         return []
     if abs(d - radius) < 1e-12:
-        return [p]          # on the circle: it is its own tangent point
+        return [p]  # on the circle: it is its own tangent point
     mid = Point((p.x + center.x) / 2.0, (p.y + center.y) / 2.0)
     return circle_circle_intersections(mid, d / 2.0, center, radius)
 
@@ -305,7 +306,7 @@ def triangle_point(axis_p1: Point, axis_p2: Point, first: Point, second: Point) 
     angle = line_angle(axis_p1, axis_p2)
     step = 1.0
     length = 0.0
-    for _ in range(100000):                      # bounded; Seamly loops unbounded
+    for _ in range(100000):  # bounded; Seamly loops unbounded
         length += step
         candidate = from_polar(start, angle, length)
         a = math.floor(candidate.dist(first))
@@ -373,8 +374,9 @@ def reflect_point(p: Point, a: Point, b: Point) -> Point:
     return Point(2 * foot.x - p.x, 2 * foot.y - p.y)
 
 
-def true_darts(base_p1: Point, base_p2: Point, dart_p1: Point, dart_p2: Point,
-               dart_p3: Point) -> tuple[Point, Point]:
+def true_darts(
+    base_p1: Point, base_p2: Point, dart_p1: Point, dart_p2: Point, dart_p3: Point
+) -> tuple[Point, Point]:
     """Port of Seamly2D ``VToolTrueDarts::FindPoint``.
 
     Given a base line (seam the dart interrupts) and the three dart points

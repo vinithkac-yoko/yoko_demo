@@ -27,11 +27,18 @@ def _node_kinds(obj) -> tuple[str, str, str]:
     return "modeling", "NodePoint", "point"
 
 
-def build_piece(pattern: Pattern, next_id, name: str, node_ids: list[int], *,
-                seam_allowance: bool = True, width: str = "1",
-                internal_paths: list[dict] | None = None,
-                grainline_anchor: int | None = None,
-                block_index: int = 0) -> Piece:
+def build_piece(
+    pattern: Pattern,
+    next_id,
+    name: str,
+    node_ids: list[int],
+    *,
+    seam_allowance: bool = True,
+    width: str = "1",
+    internal_paths: list[dict] | None = None,
+    grainline_anchor: int | None = None,
+    block_index: int = 0,
+) -> Piece:
     """Create a cut piece from construction objects.
 
     Seamly represents a piece in two layers: a ``<modeling>`` copy of each
@@ -50,36 +57,47 @@ def build_piece(pattern: Pattern, next_id, name: str, node_ids: list[int], *,
         if obj is None:
             raise ValueError(f"no object with id {calc_id}")
         mtype, ntype, tag = _node_kinds(obj)
-        for m in db.modeling:                      # reuse an existing copy
+        for m in db.modeling:  # reuse an existing copy
             if m.id_object == calc_id and m.modeling_type == mtype:
                 return m.id, ntype
         mid = next_id()
-        db.modeling.append(ModelingObject(id=mid, id_object=calc_id,
-                                          modeling_type=mtype, tag=tag))
+        db.modeling.append(ModelingObject(id=mid, id_object=calc_id, modeling_type=mtype, tag=tag))
         return mid, ntype
 
     piece = Piece(id=next_id(), name=name, seam_allowance=seam_allowance, width=width)
-    piece.raw = {"name": name, "seamAllowance": str(seam_allowance).lower(),
-                 "width": width, "united": "false", "inLayout": "true",
-                 "forbidFlipping": "false", "hideMainPath": "false", "version": "2"}
+    piece.raw = {
+        "name": name,
+        "seamAllowance": str(seam_allowance).lower(),
+        "width": width,
+        "united": "false",
+        "inLayout": "true",
+        "forbidFlipping": "false",
+        "hideMainPath": "false",
+        "version": "2",
+    }
 
     for calc_id in node_ids:
         mid, ntype = _model(calc_id)
         piece.nodes.append(PieceNode(object_id=mid, node_type=ntype))
 
-    for spec in (internal_paths or []):
+    for spec in internal_paths or []:
         ids = [_model(i)[0] for i in spec.get("node_ids", [])]
         if len(ids) < 2:
             continue
-        ip = InternalPath(id=next_id(), name=spec.get("name", "path"),
-                          line_type=spec.get("line_type", "dashDotLine"), node_ids=ids)
+        ip = InternalPath(
+            id=next_id(),
+            name=spec.get("name", "path"),
+            line_type=spec.get("line_type", "dashDotLine"),
+            node_ids=ids,
+        )
         db.internal_paths.append(ip)
         piece.internal_path_ids.append(ip.id)
 
     if grainline_anchor is not None:
         aid = next_id()
-        db.modeling.append(ModelingObject(id=aid, id_object=grainline_anchor,
-                                          modeling_type="anchor", tag="point"))
+        db.modeling.append(
+            ModelingObject(id=aid, id_object=grainline_anchor, modeling_type="anchor", tag="point")
+        )
         piece.grainline_anchor = aid
         piece.anchor_ids.append(aid)
         piece.grainline_length = 15.0
@@ -123,12 +141,14 @@ def group_pieces(pattern: Pattern) -> list[dict]:
     for key in order:
         ps = groups[key]
         label = _block_label(ps)
-        out.append({
-            "key": key,
-            "label": label,
-            "piece_ids": [p.id for p in ps],
-            "pieces": [p.name for p in ps],
-        })
+        out.append(
+            {
+                "key": key,
+                "label": label,
+                "piece_ids": [p.id for p in ps],
+                "pieces": [p.name for p in ps],
+            }
+        )
     return out
 
 
@@ -144,8 +164,11 @@ def _block_label(ps: list[Piece]) -> str:
 
 
 def pieces_for_key(pattern: Pattern, key: str) -> list[Piece]:
-    return [p for p in pattern.pieces
-            if (p.name.split(" - ", 1)[0].strip() if " - " in p.name else p.name) == key]
+    return [
+        p
+        for p in pattern.pieces
+        if (p.name.split(" - ", 1)[0].strip() if " - " in p.name else p.name) == key
+    ]
 
 
 def scoped_ids(pattern: Pattern, target_pieces: list[Piece]) -> set[int]:
@@ -176,11 +199,13 @@ def scoped_ids(pattern: Pattern, target_pieces: list[Piece]) -> set[int]:
         if o is None:
             prod = producer.get(oid)
             if prod is not None and prod not in relevant:
-                relevant.add(prod); stack.append(prod)
+                relevant.add(prod)
+                stack.append(prod)
             continue
         for r in o.refs:
             if r not in relevant:
-                relevant.add(r); stack.append(r)
+                relevant.add(r)
+                stack.append(r)
     return relevant
 
 
@@ -253,7 +278,9 @@ def piece_outline_points(pattern: Pattern, ev: Evaluated, piece: Piece) -> list[
     return pts
 
 
-def piece_outline_vertices(pattern: Pattern, ev: Evaluated, piece: Piece) -> list[tuple[str, geo.Point]]:
+def piece_outline_vertices(
+    pattern: Pattern, ev: Evaluated, piece: Piece
+) -> list[tuple[str, geo.Point]]:
     """(name, point) for the NodePoint vertices of the outline — for labels."""
     mm = modeling_map(pattern)
     by_id = pattern.object_by_id()
@@ -270,8 +297,9 @@ def piece_outline_vertices(pattern: Pattern, ev: Evaluated, piece: Piece) -> lis
     return out
 
 
-def piece_internal_paths(pattern: Pattern, ev: Evaluated, piece: Piece
-                         ) -> list[tuple[str, str, list[geo.Point]]]:
+def piece_internal_paths(
+    pattern: Pattern, ev: Evaluated, piece: Piece
+) -> list[tuple[str, str, list[geo.Point]]]:
     """(role, name, points) for each internal path (dart, drill hole, guide…)."""
     mm = modeling_map(pattern)
     ips = internal_paths_by_id(pattern)
@@ -294,8 +322,9 @@ def piece_internal_paths(pattern: Pattern, ev: Evaluated, piece: Piece
     return out
 
 
-def piece_grainline(pattern: Pattern, ev: Evaluated, piece: Piece
-                    ) -> tuple[geo.Point, geo.Point] | None:
+def piece_grainline(
+    pattern: Pattern, ev: Evaluated, piece: Piece
+) -> tuple[geo.Point, geo.Point] | None:
     """Endpoints of the grainline, if the piece has one."""
     if piece.grainline_anchor is None:
         return None

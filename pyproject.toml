@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seamly-engine"
+version = "0.1.0"
+description = "Headless Seamly2D-compatible sewing-pattern engine: parse, evaluate, edit and write parametric patterns"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["sewing", "pattern", "seamly2d", "valentina", "cad", "parametric", "pattern-making"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
+    "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+    "Typing :: Typed",
+]
+# Standard library only, on purpose: the engine has to be importable anywhere,
+# including inside a training loop or a serverless function.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.urls]
+Source = "https://github.com/vinithkac-yoko/yoko_demo"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+seamly_engine = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.format]
+# The formatter reaches into fenced Python blocks in Markdown; the docs use
+# aligned assignments to make a point, so leave prose alone.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "UP",        # pyupgrade — keep the 3.11 floor honest
+    "B",         # bugbear
+    "SIM",       # simplify
+    "RUF",       # ruff-specific
+]
+ignore = [
+    "E741",      # `l`/`r` read fine for the left and right operands of a binary node
+    # `ruff format` owns line breaking; E501 only fires where it cannot help
+    # (long string literals and URLs), which is not worth mangling code over.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on geometry; long expected-value lines are clearer unwrapped.
+"tests/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["seamly_engine"]

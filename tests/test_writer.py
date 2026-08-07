@@ -4,6 +4,7 @@ The writer is what makes saving, versioning, and export possible, so the key
 guarantee is a **lossless round-trip**: parse -> write -> parse must reproduce the
 same objects and identical geometry.
 """
+
 from __future__ import annotations
 
 import math
@@ -57,14 +58,17 @@ def test_blank_pattern_has_origin(meas):
 def test_build_from_blank_and_roundtrip(meas):
     """Draft from nothing, then confirm the result saves and reloads."""
     sess = PatternSession(new_pattern("Fresh", measurements_file="m.vst"), meas)
-    r1 = sess.add_object("point", "endLine",
-                         {"basePoint": "1", "angle": "270", "length": "10", "name": "B"})
-    r2 = sess.add_object("point", "endLine",
-                         {"basePoint": "1", "angle": "0",
-                          "length": "(waist_circ/4)+2*#CM", "name": "C"})
+    r1 = sess.add_object(
+        "point", "endLine", {"basePoint": "1", "angle": "270", "length": "10", "name": "B"}
+    )
+    r2 = sess.add_object(
+        "point",
+        "endLine",
+        {"basePoint": "1", "angle": "0", "length": "(waist_circ/4)+2*#CM", "name": "C"},
+    )
     assert r1.ok and r2.ok
-    assert math.isclose(sess.evaluated.points[2].y, 10.0, abs_tol=1e-6)   # 10cm down
-    assert math.isclose(sess.evaluated.points[3].x, 17.0, abs_tol=1e-6)   # 60/4 + 2
+    assert math.isclose(sess.evaluated.points[2].y, 10.0, abs_tol=1e-6)  # 10cm down
+    assert math.isclose(sess.evaluated.points[3].x, 17.0, abs_tol=1e-6)  # 60/4 + 2
 
     pat2 = parse_pattern(pattern_to_xml(sess.pattern), is_text=True)
     ev2 = se.evaluate_pattern(pat2, meas)
@@ -77,19 +81,25 @@ def test_create_piece_from_blank_canvas(meas):
     from seamly_engine.pieces import piece_outline_points
 
     sess = PatternSession(new_pattern("Skirt block"), meas)
-    for attrs in ({"basePoint": "1", "angle": "0", "length": "17", "name": "B"},
-                  {"basePoint": "2", "angle": "270", "length": "60", "name": "C"},
-                  {"basePoint": "1", "angle": "270", "length": "60", "name": "D"}):
+    for attrs in (
+        {"basePoint": "1", "angle": "0", "length": "17", "name": "B"},
+        {"basePoint": "2", "angle": "270", "length": "60", "name": "C"},
+        {"basePoint": "1", "angle": "270", "length": "60", "name": "D"},
+    ):
         assert sess.add_object("point", "endLine", attrs).ok
 
-    res = sess.create_piece("Skirt Front", [1, 2, 3, 4], grainline_anchor=1,
-                            internal_paths=[{"name": "Dart 1", "node_ids": [1, 3]}])
+    res = sess.create_piece(
+        "Skirt Front",
+        [1, 2, 3, 4],
+        grainline_anchor=1,
+        internal_paths=[{"name": "Dart 1", "node_ids": [1, 3]}],
+    )
     assert res.ok, res.message
     piece = sess.pattern.pieces[0]
     assert len(piece.nodes) == 4 and piece.internal_path_ids and piece.grainline_anchor
 
     outline = piece_outline_points(sess.pattern, sess.evaluated, piece)
-    assert len(outline) == 5                      # 4 corners + closing point
+    assert len(outline) == 5  # 4 corners + closing point
     assert math.isclose(outline[1].x, 17.0, abs_tol=1e-6)
     assert math.isclose(outline[2].y, 60.0, abs_tol=1e-6)
 
@@ -99,8 +109,9 @@ def test_create_piece_from_blank_canvas(meas):
     assert len(pat2.pieces) == 1 and pat2.pieces[0].name == "Skirt Front"
     assert len(pat2.pieces[0].nodes) == 4 and ev2.unresolved == {}
     reloaded = piece_outline_points(pat2, ev2, pat2.pieces[0])
-    assert [(round(p.x, 4), round(p.y, 4)) for p in reloaded] == \
-           [(round(p.x, 4), round(p.y, 4)) for p in outline]
+    assert [(round(p.x, 4), round(p.y, 4)) for p in reloaded] == [
+        (round(p.x, 4), round(p.y, 4)) for p in outline
+    ]
 
 
 def test_create_piece_rejects_too_few_nodes(meas):
@@ -115,9 +126,8 @@ def test_adding_piece_preserves_imported_pieces(meas):
     ids = {o.raw.get("name"): o.id for o in pat.all_objects() if o.raw.get("name")}
     before = [p.name for p in pat.pieces]
 
-    assert sess.create_piece("New Panel",
-                             [ids["A1"], ids["A9"], ids["A10"], ids["A8"]]).ok
+    assert sess.create_piece("New Panel", [ids["A1"], ids["A9"], ids["A10"], ids["A8"]]).ok
 
     pat2 = parse_pattern(pattern_to_xml(sess.pattern), is_text=True)
-    assert [p.name for p in pat2.pieces] == before + ["New Panel"]
+    assert [p.name for p in pat2.pieces] == [*before, "New Panel"]
     assert se.evaluate_pattern(pat2, meas).unresolved == {}

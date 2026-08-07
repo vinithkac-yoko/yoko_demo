@@ -3,9 +3,8 @@
 ## What this is
 
 A headless reimplementation of Seamly2D's pattern model, evaluation and file
-format, plus the two things that turn it into an **environment for machine
-agents**: a semantically-tagged state representation, and a closed action space
-with hard transition guarantees.
+format, plus the thing that is not in Seamly2D: a **semantically-tagged state
+representation** that a program — or a model — can reason over.
 
 The originating requirement shapes everything: an agent editing a sewing pattern
 must **not reason from a screenshot alone**. It needs a structured view in which
@@ -19,13 +18,17 @@ rest is what's needed to make it true and keep it true.
 | In | Out |
 |---|---|
 | Parse / evaluate / mutate / render / write patterns | Deciding *which* edit to make |
-| The action space (`TOOLS`, `dispatch_tool`) | Prompts, model calls, training loops |
-| The state representation | Serving a UI or an API |
+| The state representation | Prompts, model calls, tool schemas, training loops |
+| The mutation API and its guarantees | Serving a UI or an API |
 | Correctness against real Seamly2D files | Ingesting instruction documents; eval harnesses |
 
 Consumers depend on this package; nothing here depends on them. That direction
 is deliberate — this is the part that has to stay correct, and a component that
 bends to suit whichever model is being tried this month stops being ground truth.
+
+An agent-facing action space (JSON tool schemas plus a dispatcher) lived here
+briefly and was moved out to the consumer that needs it. It is preserved at the
+`pre-split` tag: `git show pre-split:src/seamly_engine/actions.py`.
 
 ### Why it was written from scratch
 
@@ -117,47 +120,39 @@ derived the same way. Nothing here is inferred by a model.
 plus its transitive construction drivers, which is what makes a per-turn payload
 affordable.
 
-## The action space
+## Mutation
 
-`actions.py` — nine tools, mirroring the Seamly object model rather than
-inventing a vocabulary:
+`operations.PatternSession` wraps a parsed pattern and a measurement table, and
+is the only supported way to change one. Every method returns an `OpResult`
+rather than raising, so a caller driving the engine in a loop can read the
+failure and try something else.
 
-| Tool | Covers |
-|---|---|
-| `add_point` | all **21** Seamly point tools (`single`, `endLine`, `alongLine`, `normal`, `bisector`, `intersectXY`, `lineIntersect`, `height`, `shoulder`, `triangle`, `pointOfContact`, `lineIntersectAxis`, `curveIntersectAxis`, `cutSpline`, `cutArc`, `cutSplinePath`, `pointOfIntersectionCircles`, `pointOfIntersectionArcs`, `pointOfIntersectionCurves`, `pointFromCircleAndTangent`, `pointFromArcAndTangent`) |
-| `add_line` | a line between two points |
-| `add_curve` | `arc`, `arcWithLength`, `elArc`, `cubicBezier`, `cubicBezierPath` |
-| `add_dart` | `trueDarts` — two leg points from a base line and three dart points |
-| `add_operation` | `rotation`, `moving`, `flippingByLine`, `flippingByAxis`, over points **and** curves |
-| `create_piece` | construction geometry → a real cut piece (modeling copies + `<piece>`), with seam allowance, internal paths and a grainline |
-| `add_variable` | add or update an increment |
-| `edit_object` | any attribute of any object |
-| `delete_object` | block-and-report |
+`add_object(tag, tool_type, attrs, children=...)` covers the whole object model:
+all **21** Seamly point tools, five curve types (`arc`, `arcWithLength`,
+`elArc`, `cubicBezier`, `cubicBezierPath`), lines, `trueDarts`, and the four
+operation tools (`rotation`, `moving`, `flippingByLine`, `flippingByAxis`, over
+points **and** curves). `create_piece` turns construction geometry into a real
+cut piece; `set_variable`, `edit_object` and `delete_object` do the rest.
 
-`TOOLS` is JSON-schema, already in Anthropic tool-use form. `dispatch_tool` is
-the transition function.
+### Guarantees
 
-It lives in the engine rather than beside a policy because it belongs to the
-environment: what the actions *are*, and what they do, is a property of Seamly2D
-and not of whichever model is driving. Every policy — prompted, fine-tuned,
-replayed, human — goes through the same surface, so they are measured on equal
-terms.
-
-### Transition guarantees
-
-1. **Dispatch never raises.** A malformed call returns a failed `OpResult`
-   carrying the reason, so a policy reads the error and corrects itself instead
-   of crashing the episode.
-2. **Mutations re-evaluate and roll back.** If an add or edit leaves any
+1. **Mutations re-evaluate and roll back.** If an add or edit leaves any
    previously-resolved object unresolvable, the whole change is reverted and the
-   ids that would have broken come back with the refusal.
-3. **Delete is block-and-report, never cascade.** Deleting an object others
+   ids that would have broken come back with the refusal. There is no
+   half-applied state.
+2. **Delete is block-and-report, never cascade.** Deleting an object others
    depend on is refused and the full dependent chain is returned; the caller
    decides whether to delete those first. This mirrors desktop Seamly2D and keeps
    the pattern always-valid.
+3. **Ids are allocated correctly, including the awkward case.** `trueDarts`
+   declares two output points inline as `point1`/`point2` attributes; those ids
+   never appear as elements of their own but are referenceable, so the allocator
+   has to account for them.
 
 The trickier algorithms — `trueDarts`, `triangle`, tangent contact points — are
 ports of the corresponding Seamly2D C++ tools, verified numerically in the tests.
+That is also why this package is GPL-3.0: it matches upstream, removing any
+derivative-work question about those two routines.
 
 ## Rendering
 
@@ -169,7 +164,7 @@ standalone line objects still read; `highlight_ids` accents geometry just create
 
 ## Verification
 
-The suite (57 tests) runs against the **Aldrich 6th-ed. basic set** — a real
+The suite (53 tests) runs against the **Aldrich 6th-ed. basic set** — a real
 production file, not a toy.
 
 * 425 objects parsed, **425 evaluated to finite geometry, 0 unresolved**.
@@ -179,8 +174,10 @@ production file, not a toy.
   differences**, byte-identical re-write.
 * State export tags 119 final-outline vs. 341 construction objects, identifying
   darts, grainlines, drill holes and curve controls.
-* Every tool exercised through `dispatch_tool`, including the failure paths:
-  unknown tool, missing argument, wrong types, rollback, delete refusal.
+* The mutation guarantees tested directly: an edit that breaks dependents is
+  rolled back with coordinates unchanged, an object that cannot be computed is
+  never added, delete refuses with its dependent chain, a leaf deletes cleanly,
+  and edits apply to the production file with 0 unresolved afterwards.
 
 ## What's missing
 
@@ -203,3 +200,18 @@ Honest list, roughly in order of how much it costs a real garment.
    its control points to exist as real point objects. That is faithful to Seamly,
    but it means "draw a smooth curve through these four points" is a decision the
    caller has to make, not something the engine offers.
+6. **Full-circle arcs.** `Arc.polyline` sweeps from `angle1` to `angle2` in the
+   stored direction; equal angles give a degenerate zero-length arc rather than a
+   full circle. No pattern seen so far stores one that way, and there is no
+   fixture to validate a change against, so the behaviour is documented rather
+   than guessed at.
+
+## Repository conventions
+
+* `src/` layout — tests import the installed package, so a broken packaging
+  config fails loudly instead of silently working through the source tree.
+* **Standard library only.** No runtime dependencies, so the engine imports
+  anywhere: a notebook, a training loop, a serverless function.
+* `ruff` for both linting and formatting, configured in `pyproject.toml`.
+  `ruff check . && ruff format --check . && pytest` is the whole gate.
+* Python 3.11+.
