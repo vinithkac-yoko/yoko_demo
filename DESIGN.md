@@ -27,8 +27,8 @@ is deliberate — this is the part that has to stay correct, and a component tha
 bends to suit whichever model is being tried this month stops being ground truth.
 
 An agent-facing action space (JSON tool schemas plus a dispatcher) lived here
-briefly and was moved out to the consumer that needs it. It is preserved at the
-`pre-split` tag: `git show pre-split:src/seamly_engine/actions.py`.
+briefly and was moved out to the consumer that needs it. It stays reachable in
+history: `git show ca8f258:src/seamly_engine/actions.py`.
 
 ### Why it was written from scratch
 

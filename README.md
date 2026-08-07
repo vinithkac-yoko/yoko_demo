@@ -169,11 +169,11 @@ them. That direction is deliberate — this is the part that has to stay correct
 and it must not drift to suit a consumer.
 
 An agent-facing action space (JSON tool schemas plus a dispatcher over
-`PatternSession`) used to live here and was moved out. It is preserved at the
-`pre-split` tag:
+`PatternSession`) used to live here and was moved out. It stays reachable in
+history:
 
 ```bash
-git show pre-split:src/seamly_engine/actions.py
+git show ca8f258:src/seamly_engine/actions.py
 ```
 
 ## Licence and relationship to Seamly2D
