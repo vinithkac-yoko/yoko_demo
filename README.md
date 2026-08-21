@@ -114,6 +114,7 @@ than a single-point edit, so the default favours a model with thinking on):
 | `VLA_VISION_WIDTH` | `900` | Width of the PNG sent to the model. Image tokens scale with pixel area — lower is cheaper. |
 | `VLA_SEND_IMAGE` | `1` | Set to `0` to run **state-only** (no image) for the cheapest turns; the structured state is the primary input regardless. |
 | `VLA_MAX_STEPS` | `12` | Max tool-call rounds per instruction — caps the worst-case cost of one run. |
+| `VLA_MAX_TOKENS` | `16000` | Per-turn output ceiling. Thinking tokens count against this too, so an unscoped instruction over a large pattern can burn most of a small budget before writing its closing summary — raise this (or scope to a block first) if you see "ran out of output budget mid-run". |
 
 Per-turn payload is also kept small by sending only the objects a tool call
 actually touched back to the model, rather than the whole pattern state every

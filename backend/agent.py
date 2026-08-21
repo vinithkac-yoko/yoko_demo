@@ -78,6 +78,12 @@ MAX_ITERATIONS = int(os.getenv("VLA_MAX_STEPS", "12"))
 # this is a direct cost lever; the structured state is the primary input.
 VISION_WIDTH = int(os.getenv("VLA_VISION_WIDTH", "900"))
 SEND_IMAGE = os.getenv("VLA_SEND_IMAGE", "1") != "0"
+# Ceiling for one model response — thinking tokens count against this too, not
+# just the visible reply. An unscoped instruction can hand the model the whole
+# pattern's state, and adaptive thinking over that can burn most of a small
+# budget before it ever writes a closing summary (the tool call itself still
+# lands first, so the edit isn't lost — only the wrap-up sentence is).
+MAX_TOKENS = int(os.getenv("VLA_MAX_TOKENS", "16000"))
 
 # Models that accept adaptive thinking. Older/cheaper models (e.g. Haiku 4.5)
 # reject it, so it's simply omitted for them.
@@ -738,7 +744,7 @@ def _create(client, messages: list[dict], model: str | None = None):
     it; if a model rejects it anyway, retry without it rather than failing."""
     model = model or MODEL
     kwargs = dict(
-        model=model, max_tokens=8000, system=SYSTEM_PROMPT, tools=TOOLS, messages=messages
+        model=model, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, tools=TOOLS, messages=messages
     )
     if not any(m in model for m in _ADAPTIVE_THINKING):
         return client.messages.create(**kwargs)
