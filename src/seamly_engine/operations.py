@@ -213,6 +213,132 @@ class PatternSession:
             True, f"created piece “{name}” (#{piece.id}) with {len(piece.nodes)} outline nodes"
         )
 
+    def split_piece(
+        self,
+        piece_id: int,
+        point_a_id: int,
+        point_b_id: int,
+        *,
+        name_a: str,
+        name_b: str,
+        seam_allowance: bool | None = None,
+        width: str | None = None,
+    ) -> OpResult:
+        """Cut a piece into two along the straight line between two points.
+        Each point may be an existing outline vertex, or a point you just
+        constructed that sits exactly on one of the piece's straight edges.
+        See :func:`seamly_engine.pieces.split_piece` for the geometric rules.
+        Rolls back if either resulting outline doesn't resolve to a real
+        shape; never partially mutates."""
+        from .pieces import piece_outline_points, split_piece
+
+        snapshot = copy.deepcopy(self.pattern)
+        try:
+            piece_a, piece_b, dropped = split_piece(
+                self.pattern,
+                self.evaluated,
+                self._next_id,
+                piece_id,
+                point_a_id,
+                point_b_id,
+                name_a=name_a,
+                name_b=name_b,
+                seam_allowance=seam_allowance,
+                width=width,
+            )
+        except ValueError as e:
+            self.pattern = snapshot
+            return OpResult(False, f"could not split: {e}")
+
+        out_a = piece_outline_points(self.pattern, self.evaluated, piece_a)
+        out_b = piece_outline_points(self.pattern, self.evaluated, piece_b)
+        if len(out_a) < 3 or len(out_b) < 3:
+            self.pattern = snapshot
+            return OpResult(False, "the split didn't leave two real outlines")
+
+        self.added_ids.update({piece_a.id, piece_b.id})
+        self.added_ids.update(n.object_id for n in piece_a.nodes + piece_b.nodes)
+        msg = f"split into “{name_a}” (#{piece_a.id}) and “{name_b}” (#{piece_b.id})"
+        if dropped:
+            msg += (
+                f"; {len(dropped)} internal path(s) straddled the cut and were "
+                f"dropped ({', '.join(dropped)}) — re-add them if needed"
+            )
+        return OpResult(True, msg)
+
+    def merge_piece(
+        self,
+        piece_a_id: int,
+        piece_b_id: int,
+        edge_point_1: int,
+        edge_point_2: int,
+        *,
+        name: str,
+        seam_allowance: bool | None = None,
+        width: str | None = None,
+    ) -> OpResult:
+        """Combine two pieces into one along a seam they share, named by its
+        two endpoints. See :func:`seamly_engine.pieces.merge_piece`. Rolls
+        back if the pieces don't actually share that edge, or the merged
+        outline doesn't resolve."""
+        from .pieces import merge_piece, piece_outline_points
+
+        snapshot = copy.deepcopy(self.pattern)
+        try:
+            merged = merge_piece(
+                self.pattern,
+                self._next_id,
+                piece_a_id,
+                piece_b_id,
+                edge_point_1,
+                edge_point_2,
+                name=name,
+                seam_allowance=seam_allowance,
+                width=width,
+            )
+        except ValueError as e:
+            self.pattern = snapshot
+            return OpResult(False, f"could not merge: {e}")
+
+        outline = piece_outline_points(self.pattern, self.evaluated, merged)
+        if len(outline) < 3:
+            self.pattern = snapshot
+            return OpResult(False, "the merge didn't resolve to a real outline")
+
+        self.added_ids.update({merged.id} | {n.object_id for n in merged.nodes})
+        return OpResult(True, f"merged into “{name}” (#{merged.id})")
+
+    def delete_piece(self, piece_id: int) -> OpResult:
+        """Remove a piece. Its construction geometry is untouched — a piece is
+        a view onto construction objects, not their owner."""
+        from .pieces import delete_piece, piece_by_id
+
+        piece = piece_by_id(self.pattern, piece_id)
+        if piece is None:
+            return OpResult(False, f"no piece with id {piece_id}")
+        name = piece.name
+        delete_piece(self.pattern, piece_id)
+        return OpResult(True, f"deleted piece “{name}” (#{piece_id})")
+
+    def edit_piece(
+        self,
+        piece_id: int,
+        *,
+        name: str | None = None,
+        seam_allowance: bool | None = None,
+        width: str | None = None,
+    ) -> OpResult:
+        """Rename a piece, or change its seam allowance / width."""
+        from .pieces import edit_piece
+
+        try:
+            piece = edit_piece(
+                self.pattern, piece_id, name=name, seam_allowance=seam_allowance, width=width
+            )
+        except ValueError as e:
+            return OpResult(False, str(e))
+        return OpResult(True, f"updated piece “{piece.name}” (#{piece.id})")
+
     def set_variable(self, name: str, formula: str, description: str = "") -> OpResult:
         """Add or update a pattern variable (increment). Re-evaluates and rolls
         back if the new value breaks any formula that uses it."""

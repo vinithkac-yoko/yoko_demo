@@ -374,6 +374,65 @@ def reflect_point(p: Point, a: Point, b: Point) -> Point:
     return Point(2 * foot.x - p.x, 2 * foot.y - p.y)
 
 
+def point_on_segment(p: Point, a: Point, b: Point, tol: float = 1e-6) -> bool:
+    """Whether ``p`` lies on the straight segment ``a``-``b`` (endpoints
+    excluded — a real interior point). Used to accept a freshly-constructed
+    point as a split endpoint when it sits on one of a piece's implicit
+    straight edges, without requiring it to already be an outline vertex."""
+    dx, dy = b.x - a.x, b.y - a.y
+    length2 = dx * dx + dy * dy
+    if length2 < tol * tol:
+        return False
+    cross = (p.x - a.x) * dy - (p.y - a.y) * dx
+    if abs(cross) / math.sqrt(length2) > tol:
+        return False
+    t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length2
+    return tol < t < 1 - tol
+
+
+def point_in_polygon(p: Point, polygon: list[Point], tol: float = 1e-6) -> bool:
+    """Containment test against a closed polygon, inclusive of the boundary.
+
+    Used to decide which side of a split a piece's internal geometry (a dart,
+    a grainline anchor) falls on — the polygon is a resolved piece outline, not
+    a construction object, so there is no formula-graph way to ask this. Real
+    patterns routinely have internal points that sit exactly *on* an outline
+    vertex (a dart's legs are usually the seam points either side of it), so a
+    strict interior-only ray cast — which is numerically unstable for a point
+    that lands exactly on an edge or vertex — would wrongly call those
+    "outside". Boundary membership is checked directly first; only a point
+    that misses the boundary falls through to the ray cast.
+    """
+    if len(polygon) < 3:
+        return False
+    n = len(polygon)
+    for i in range(n - 1):
+        a, b = polygon[i], polygon[i + 1]
+        if p.dist(a) <= tol or p.dist(b) <= tol:
+            return True
+        dx, dy = b.x - a.x, b.y - a.y
+        length2 = dx * dx + dy * dy
+        if length2 < tol * tol:
+            continue
+        t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length2
+        if 0.0 <= t <= 1.0:
+            foot = Point(a.x + t * dx, a.y + t * dy)
+            if p.dist(foot) <= tol:
+                return True
+
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i].x, polygon[i].y
+        xj, yj = polygon[j].x, polygon[j].y
+        if (yi > p.y) != (yj > p.y):
+            x_cross = xi + (p.y - yi) * (xj - xi) / (yj - yi)
+            if p.x < x_cross:
+                inside = not inside
+        j = i
+    return inside
+
+
 def true_darts(
     base_p1: Point, base_p2: Point, dart_p1: Point, dart_p2: Point, dart_p3: Point
 ) -> tuple[Point, Point]:
