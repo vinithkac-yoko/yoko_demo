@@ -72,6 +72,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert on geometry; long expected-value lines are clearer unwrapped.
 "tests/*" = ["E501"]
+# backend/ isn't an installed package -- app.py/agent.py insert src/ onto
+# sys.path before importing seamly_engine, so those imports can't be at the
+# top of the file. FastAPI's File(...)/Depends(...) defaults are the
+# documented pattern, not the mutable-default footgun B008 warns about.
+"backend/*" = ["E402", "B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["seamly_engine"]

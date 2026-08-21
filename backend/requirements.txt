@@ -1,0 +1,8 @@
+# Backend runtime deps. The engine is imported from ../src (installed via
+# `pip install -e .` at the repo root, or PYTHONPATH=src).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2
+anthropic>=0.69          # agent loop (Messages API tool use + adaptive thinking + vision)
+cairosvg>=2.7             # optional raster render for vision; needs libcairo at runtime
+python-multipart>=0.0.9   # file upload (pattern import)
