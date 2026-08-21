@@ -17,3 +17,9 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# local persistence (SQLite store) — VLA_DB points here by default
+data/
+*.db
+*.db-wal
+*.db-shm

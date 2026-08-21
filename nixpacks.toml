@@ -1,0 +1,24 @@
+# Railway / Nixpacks build config.
+# cairo is the system library cairosvg needs to rasterize the pattern for the
+# vision input. If it's ever unavailable, the agent falls back to state-only
+# reasoning (see backend/agent.py:_render_png), so the app still runs.
+[phases.setup]
+nixPkgs = ["python311", "cairo", "pkg-config"]
+
+# The repo root now also has a pyproject.toml (it's seamly_engine's own
+# package manifest) alongside requirements.txt (the app's PyPI deps).
+# Nixpacks' Python provider auto-detects one or the other; pin the install
+# phase explicitly so it can't pick pyproject.toml instead and skip
+# fastapi/anthropic/etc. seamly_engine itself is deliberately NOT installed
+# here — during this phase only requirements.txt has been copied in yet (for
+# layer caching), so `pip install -e .` would fail the same way `-e ./engine`
+# used to when this lived at engine/. It goes on PYTHONPATH at start instead.
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+# --app-dir backend puts the FastAPI app on the path; PYTHONPATH=src makes
+# seamly_engine importable (backend/app.py also inserts it itself as a
+# belt-and-braces fallback, since Railway doesn't always apply an inline
+# env prefix to the start command).
+[start]
+cmd = "PYTHONPATH=src uvicorn app:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000}"
