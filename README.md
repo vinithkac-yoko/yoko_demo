@@ -8,10 +8,11 @@ guess: points, curves, and whole pieces (split, merge, create, edit, delete)
 all go through the same mutation API that re-evaluates and rolls back if the
 result would be invalid.
 
-The workspace is a desktop build log, not a chat: you type one instruction,
-it runs to completion, and what comes back is the ordered list of tool calls
-the model made — each one showing the reasoning behind it and a before/after
-render when you click it. Every completed instruction is a save point you can
+The workspace is a desktop build log, not a chat: you type one instruction and
+watch it run — each tool call appears in the log and redraws the pattern the
+moment its edit lands, streamed over SSE rather than arriving all at once at
+the end. Click any step to see the model's thinking for it alongside a
+before/after render. Every completed instruction is a save point you can
 branch from.
 
 ## Layout
@@ -115,6 +116,7 @@ than a single-point edit, so the default favours a model with thinking on):
 | `VLA_SEND_IMAGE` | `1` | Set to `0` to run **state-only** (no image) for the cheapest turns; the structured state is the primary input regardless. |
 | `VLA_MAX_STEPS` | `12` | Max tool-call rounds per instruction — caps the worst-case cost of one run. |
 | `VLA_MAX_TOKENS` | `16000` | Per-turn output ceiling. Thinking tokens count against this too, so an unscoped instruction over a large pattern can burn most of a small budget before writing its closing summary — raise this (or scope to a block first) if you see "ran out of output budget mid-run". |
+| `VLA_EFFORT` | `medium` | How hard the model deliberates per turn (`low`–`max`). Bounds thinking *independently* of `VLA_MAX_TOKENS`: raising the ceiling alone doesn't stop an open-ended instruction from reasoning until the budget is gone without ever calling a tool. Raise to `high` for hard drafting, lower to `low` for simple edits. |
 
 Per-turn payload is also kept small by sending only the objects a tool call
 actually touched back to the model, rather than the whole pattern state every

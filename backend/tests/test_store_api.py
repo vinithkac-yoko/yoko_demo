@@ -182,3 +182,101 @@ def test_model_picker_api(client):
     assert out["model"] == "claude-opus-4-8"
     assert client.get(f"/api/sessions/{sid}").json()["model"] == "claude-opus-4-8"
     assert client.post(f"/api/sessions/{sid}/model", json={"model": "nope"}).status_code == 400
+
+
+# --- streaming run -------------------------------------------------------------
+def _sse_events(raw: str):
+    """Parse an SSE body into [(event, data), ...]."""
+    import json as _json
+
+    out = []
+    for chunk in raw.strip().split("\n\n"):
+        if not chunk.strip():
+            continue
+        name, data = None, None
+        for line in chunk.splitlines():
+            if line.startswith("event: "):
+                name = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = _json.loads(line[len("data: ") :])
+        out.append((name, data))
+    return out
+
+
+def test_run_stream_emits_actions_then_done(client, monkeypatch):
+    """The SSE stream must deliver each action as it happens (with a render so
+    the canvas can update mid-run) and end with the full session view."""
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "S", "source": "blank"}).json()
+    sid = v["session_id"]
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None):
+        a = agent_mod.Action(
+            step_index=0,
+            tool_name="add_point",
+            tool_input={"attrs": {"name": "Z1"}},
+            reasoning="need a reference point",
+            ok=True,
+            message="added point #7",
+            touched_ids=[7],
+        )
+        yield ("action", a)
+        yield (
+            "done",
+            agent_mod.RunResult(final_text="Added it.", actions=[a], stopped_reason="done"),
+        )
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+
+    with client.stream(
+        "GET", f"/api/sessions/{sid}/run/stream", params={"text": "add a point"}
+    ) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        events = _sse_events("".join(r.iter_text()))
+
+    kinds = [k for k, _ in events]
+    assert kinds == ["start", "action", "done"]
+
+    _, action_ev = events[1]
+    assert action_ev["action"]["tool_name"] == "add_point"
+    assert action_ev["action"]["reasoning"] == "need a reference point"
+    assert action_ev["svg"].startswith("<svg"), "each action carries a fresh render"
+
+    _, done_ev = events[2]
+    assert done_ev["runs"][-1]["final_text"] == "Added it."
+
+
+def test_streamed_run_is_persisted_like_a_batch_run(client, monkeypatch):
+    """Streaming must not skip persistence — the run and its actions land in
+    the store exactly as the POST endpoint would leave them."""
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "S", "source": "blank"}).json()
+    sid = v["session_id"]
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None):
+        a = agent_mod.Action(
+            step_index=0,
+            tool_name="add_point",
+            tool_input={},
+            reasoning="because",
+            ok=False,
+            message="nope",
+        )
+        yield ("action", a)
+        yield (
+            "done",
+            agent_mod.RunResult(final_text="Could not.", actions=[a], stopped_reason="done"),
+        )
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "do it"}) as r:
+        list(r.iter_text())
+
+    view = client.get(f"/api/sessions/{sid}").json()
+    run = view["runs"][-1]
+    assert run["final_text"] == "Could not."
+    assert [a["tool_name"] for a in run["actions"]] == ["add_point"]
+    assert run["actions"][0]["reasoning"] == "because"

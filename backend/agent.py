@@ -84,6 +84,12 @@ SEND_IMAGE = os.getenv("VLA_SEND_IMAGE", "1") != "0"
 # budget before it ever writes a closing summary (the tool call itself still
 # lands first, so the edit isn't lost — only the wrap-up sentence is).
 MAX_TOKENS = int(os.getenv("VLA_MAX_TOKENS", "16000"))
+# How hard the model deliberates per turn. This bounds thinking *independently*
+# of MAX_TOKENS: raising the ceiling alone doesn't stop an open-ended
+# instruction from spending the whole budget reasoning and never reaching a
+# tool call (a run with zero actions). "medium" still reasons over the geometry
+# but reliably gets to acting.
+EFFORT = os.getenv("VLA_EFFORT", "medium")
 
 # Models that accept adaptive thinking. Older/cheaper models (e.g. Haiku 4.5)
 # reject it, so it's simply omitted for them.
@@ -739,22 +745,50 @@ def _instruction_turn(
     return content
 
 
+def _rejected(e: Exception) -> bool:
+    """A parameter the model/SDK won't accept, as opposed to a real failure
+    (rate limit, network, auth) that should propagate."""
+    name = type(e).__name__
+    return "BadRequest" in name or "TypeError" in name
+
+
 def _create(client, messages: list[dict], model: str | None = None):
-    """One model call. Adaptive thinking is only sent to models that support
-    it; if a model rejects it anyway, retry without it rather than failing."""
+    """One model call.
+
+    Two request options degrade independently, because either can be rejected
+    by an older SDK or a model that doesn't support it, and neither is worth
+    failing a run over:
+
+    * ``thinking.display="summarized"`` — without it the API returns thinking
+      blocks with *empty text* on current models (``display`` defaults to
+      "omitted"), so the action log would show no reasoning at all.
+    * ``output_config.effort`` — bounds deliberation so the loop reaches a tool
+      call instead of spending the whole token budget thinking.
+    """
     model = model or MODEL
     kwargs = dict(
         model=model, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, tools=TOOLS, messages=messages
     )
     if not any(m in model for m in _ADAPTIVE_THINKING):
         return client.messages.create(**kwargs)
+
+    thinking = {"type": "adaptive", "display": "summarized"}
     try:
-        return client.messages.create(thinking={"type": "adaptive"}, **kwargs)
+        return client.messages.create(thinking=thinking, output_config={"effort": EFFORT}, **kwargs)
     except Exception as e:
-        name = type(e).__name__
-        if "BadRequest" not in name and "TypeError" not in name:
+        if not _rejected(e):
             raise
-        log.warning("adaptive thinking rejected (%s: %s) — retrying without it", name, e)
+        log.warning(
+            "effort=%s rejected (%s: %s) — retrying without it", EFFORT, type(e).__name__, e
+        )
+    try:
+        return client.messages.create(thinking=thinking, **kwargs)
+    except Exception as e:
+        if not _rejected(e):
+            raise
+        log.warning(
+            "adaptive thinking rejected (%s: %s) — retrying without it", type(e).__name__, e
+        )
         return client.messages.create(**kwargs)
 
 
@@ -767,49 +801,114 @@ def run_instruction(
 ) -> RunResult:
     """Run one typed instruction to completion. Never raises — any failure
     comes back as a ``RunResult`` with ``stopped_reason`` set, so the caller
-    always has something to persist and show."""
+    always has something to persist and show.
+
+    This is the batch form: it drains :func:`stream_instruction` and returns
+    only the final result. Callers that want to show progress as it happens
+    should iterate that generator instead."""
+    result: RunResult | None = None
+    for kind, payload in stream_instruction(session, instruction, pieces, label, model):
+        if kind == "done":
+            result = payload
+    assert result is not None  # the generator always ends with a "done" event
+    return result
+
+
+def stream_instruction(
+    session: PatternSession,
+    instruction: str,
+    pieces=None,
+    label: str = "",
+    model: str | None = None,
+):
+    """Run one instruction, yielding progress as it happens.
+
+    Yields ``("action", Action)`` after each tool call is dispatched — the
+    edit is already applied to ``session`` at that point, so the caller can
+    re-render the pattern to show the change — and finally exactly one
+    ``("done", RunResult)``. Never raises; failures arrive as the terminal
+    ``done`` event with ``stopped_reason`` set."""
     if not os.getenv("ANTHROPIC_API_KEY"):
-        return RunResult(
-            final_text=(
-                "Agent model not wired yet (set ANTHROPIC_API_KEY). The engine, state "
-                f"export, render, and every edit/piece operation are live — your "
-                f"instruction was: “{instruction}”."
+        yield (
+            "done",
+            RunResult(
+                final_text=(
+                    "Agent model not wired yet (set ANTHROPIC_API_KEY). The engine, state "
+                    f"export, render, and every edit/piece operation are live — your "
+                    f"instruction was: “{instruction}”."
+                ),
+                actions=[],
+                stopped_reason="no_key",
             ),
-            actions=[],
-            stopped_reason="no_key",
         )
+        return
+    actions: list[Action] = []
     try:
-        return _run_instruction(session, instruction, pieces, label, model)
+        yield from _stream_instruction(session, instruction, pieces, label, model, actions)
     except Exception as e:
         log.exception("run failed")
-        return RunResult(
-            final_text=f"The agent hit an error: {type(e).__name__}: {e}",
-            actions=[],
-            stopped_reason="error",
+        yield (
+            "done",
+            RunResult(
+                final_text=f"The agent hit an error: {type(e).__name__}: {e}",
+                actions=actions,
+                stopped_reason="error",
+            ),
         )
 
 
-def _run_instruction(
-    session: PatternSession, instruction: str, pieces, label: str, model: str | None
-) -> RunResult:
+def _no_action_text(reasoning: str, stop_reason: str) -> str:
+    """Closing note for a run that never called a tool. Surfacing whatever the
+    model was thinking is far more useful than a bare budget message — it
+    shows what it was attempting and where it stalled."""
+    if reasoning.strip():
+        return reasoning.strip()
+    if stop_reason == "max_tokens":
+        return (
+            "(ran out of output budget while thinking, before making any edit — "
+            "try a smaller instruction, or select a block first to narrow the state)"
+        )
+    return "(done)"
+
+
+def _stream_instruction(
+    session: PatternSession,
+    instruction: str,
+    pieces,
+    label: str,
+    model: str | None,
+    actions: list[Action],
+):
     import anthropic
 
     client = anthropic.Anthropic()
     messages: list[dict] = [
         {"role": "user", "content": _instruction_turn(session, instruction, pieces, label)}
     ]
-    actions: list[Action] = []
     step = 0
+    last_reasoning = ""
 
     for _ in range(MAX_ITERATIONS):
         response = _create(client, messages, model)
         if response.stop_reason != "tool_use":
             text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-            if response.stop_reason == "max_tokens" and not text.strip():
-                text = "(ran out of output budget mid-run — try a smaller instruction)"
-            return RunResult(
-                final_text=text.strip() or "(done)", actions=actions, stopped_reason="done"
+            thinking = "".join(
+                getattr(b, "thinking", "")
+                for b in response.content
+                if getattr(b, "type", "") == "thinking"
             )
+            final = text.strip()
+            if not final:
+                # No visible reply. If the run never acted, show the thinking so
+                # the user can see what it was attempting rather than a bare
+                # "ran out of budget" with an empty log.
+                final = (
+                    _no_action_text(thinking or last_reasoning, response.stop_reason)
+                    if not actions
+                    else "(done)"
+                )
+            yield ("done", RunResult(final_text=final, actions=actions, stopped_reason="done"))
+            return
 
         messages.append({"role": "assistant", "content": response.content})
         results = []
@@ -818,6 +917,7 @@ def _run_instruction(
             kind = getattr(block, "type", "")
             if kind == "thinking":
                 reasoning = getattr(block, "thinking", "") or reasoning
+                last_reasoning = reasoning or last_reasoning
                 continue
             if kind != "tool_use":
                 continue
@@ -828,19 +928,19 @@ def _run_instruction(
             oid = block.input.get("object_id") or block.input.get("piece_id")
             if isinstance(oid, int):
                 touched.add(oid)
-            actions.append(
-                Action(
-                    step_index=step,
-                    tool_name=block.name,
-                    tool_input=dict(block.input),
-                    reasoning=reasoning,
-                    ok=op.ok,
-                    message=op.message,
-                    blocked_by=list(op.blocked_by or []),
-                    touched_ids=sorted(touched),
-                )
+            action = Action(
+                step_index=step,
+                tool_name=block.name,
+                tool_input=dict(block.input),
+                reasoning=reasoning,
+                ok=op.ok,
+                message=op.message,
+                blocked_by=list(op.blocked_by or []),
+                touched_ids=sorted(touched),
             )
+            actions.append(action)
             step += 1
+            yield ("action", action)
 
             payload = {"ok": op.ok, "message": op.message}
             if op.blocked_by:
@@ -858,8 +958,11 @@ def _run_instruction(
             )
         messages.append({"role": "user", "content": results})
 
-    return RunResult(
-        final_text="Stopped after reaching the maximum number of steps.",
-        actions=actions,
-        stopped_reason="max_steps",
+    yield (
+        "done",
+        RunResult(
+            final_text="Stopped after reaching the maximum number of steps.",
+            actions=actions,
+            stopped_reason="max_steps",
+        ),
     )

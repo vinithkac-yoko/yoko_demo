@@ -107,6 +107,21 @@
   .badge.done { background: var(--ok-bg); color: var(--ok); }
   .badge.error, .badge.max_steps { background: var(--fail-bg); color: var(--fail); }
   .badge.no_key { background: #fff7ed; color: #c2410c; }
+  .badge.running { background: var(--accent-dim); color: var(--accent); }
+
+  .run-block.live { border-color: var(--accent); }
+  .run-final.working { color: var(--accent); font-style: italic; }
+  .run-final.working::after {
+    content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 6px;
+    border-radius: 50%; background: currentColor; animation: pulse 1s ease-in-out infinite;
+    vertical-align: middle;
+  }
+  @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .run-final.working::after { animation: none; opacity: .7; }
+  }
+  .action-row.pending { cursor: default; }
+  .action-row.pending:hover { background: transparent; }
 
   .action-list { display: flex; flex-direction: column; }
   .action-row {
@@ -137,9 +152,14 @@
   #detail-header .spacer { flex: 1; }
   #detail-reasoning {
     padding: 10px 16px; background: #fffbeb; border-bottom: 1px solid var(--border);
-    font-size: 13px; color: #78350f; font-style: italic; max-height: 90px; overflow-y: auto;
+    font-size: 13px; color: #78350f; max-height: 220px; overflow-y: auto; flex-shrink: 0;
   }
-  #detail-reasoning.empty { display: none; }
+  #detail-reasoning h4 {
+    margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: #92400e; font-weight: 700;
+  }
+  #detail-reasoning .body { white-space: pre-wrap; line-height: 1.5; }
+  #detail-reasoning.empty .body { font-style: italic; opacity: .7; }
   #detail-body { flex: 1; display: flex; min-height: 0; }
   .detail-render { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; }
   .detail-render:last-child { border-right: none; }
@@ -237,7 +257,10 @@
       <span id="detail-message" style="font-size:12px;color:var(--text-dim)"></span>
       <button class="ghost" id="detail-close">✕</button>
     </div>
-    <div id="detail-reasoning"></div>
+    <div id="detail-reasoning">
+      <h4>Thinking</h4>
+      <div class="body" id="detail-reasoning-body"></div>
+    </div>
     <div id="detail-body">
       <div class="detail-render">
         <h4>Before</h4>
@@ -271,6 +294,7 @@
 // --- state ------------------------------------------------------------
 let session = null;          // the full /api/sessions/{sid} view
 let selectedAction = null;   // {runId, stepIndex}
+let liveRun = null;          // {instruction, actions[]} while a run is streaming
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -367,11 +391,7 @@ async function refresh() {
   render();
 }
 
-function render() {
-  $("#pattern-name").textContent = session.pattern.name || "Untitled";
-  const s = session.state_summary;
-  $("#state-summary").textContent = `${s.objects} objects · ${s.pieces} pieces` + (s.unresolved ? ` · ${s.unresolved} unresolved` : "");
-
+function renderCanvas() {
   const canvasWrap = $("#canvas-wrap");
   if (session.svg) {
     canvasWrap.classList.remove("empty");
@@ -380,6 +400,14 @@ function render() {
     canvasWrap.classList.add("empty");
     canvasWrap.innerHTML = "<span>No geometry yet</span>";
   }
+}
+
+function render() {
+  $("#pattern-name").textContent = session.pattern.name || "Untitled";
+  const s = session.state_summary;
+  $("#state-summary").textContent = `${s.objects} objects · ${s.pieces} pieces` + (s.unresolved ? ` · ${s.unresolved} unresolved` : "");
+
+  renderCanvas();
 
   const blockSel = $("#block-select");
   blockSel.innerHTML = '<option value="">Whole pattern</option>';
@@ -431,36 +459,98 @@ input.addEventListener("keydown", (e) => {
 });
 $("#run-btn").onclick = runInstruction;
 
-async function runInstruction() {
+function runInstruction() {
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || liveRun) return;
   input.value = "";
   input.style.height = "auto";
   $("#run-btn").disabled = true;
   $("#run-btn").textContent = "Running…";
-  try {
-    session = await api("POST", `/api/sessions/${session.session_id}/run`, { text });
-    render();
-    $("#log").scrollTop = $("#log").scrollHeight;
-  } catch (err) {
-    toast("Run failed: " + err.message);
-  } finally {
+
+  // Streamed so the canvas and log update per tool call instead of jumping at
+  // the end. EventSource speaks GET, hence the query param.
+  liveRun = { instruction: text, actions: [] };
+  renderLog();
+
+  const url = `/api/sessions/${session.session_id}/run/stream?text=${encodeURIComponent(text)}`;
+  const es = new EventSource(url);
+
+  const finish = () => {
+    es.close();
+    liveRun = null;
     $("#run-btn").disabled = false;
     $("#run-btn").textContent = "Run";
+  };
+
+  es.addEventListener("action", (e) => {
+    const { action, svg } = JSON.parse(e.data);
+    liveRun.actions.push(action);
+    if (svg) {
+      session.svg = svg;          // show the edit as it lands
+      renderCanvas();
+    }
+    renderLog();
+  });
+
+  es.addEventListener("done", (e) => {
+    const view = JSON.parse(e.data);
+    finish();
+    session = view;
+    render();
+    $("#log").scrollTop = $("#log").scrollHeight;
+  });
+
+  es.onerror = () => {
+    // EventSource also fires this on a normal server-side close; only surface
+    // it as a failure if the run never delivered its terminal event.
+    if (!liveRun) return;
+    const partial = liveRun.actions.length;
+    finish();
+    toast(partial ? "Run interrupted — reloading what completed." : "Run failed.");
+    reloadSession();
+  };
+}
+
+async function reloadSession() {
+  try {
+    session = await api("GET", `/api/sessions/${session.session_id}`);
+    render();
+  } catch (err) {
+    toast("Could not reload: " + err.message);
   }
 }
 
 function renderLog() {
   const log = $("#log");
   log.innerHTML = "";
-  if (!session.runs.length) {
+  if (!session.runs.length && !liveRun) {
     log.appendChild(el("div", "log-empty", "Type an instruction below to start drafting. Every run becomes a saved, branchable step in this log."));
     return;
   }
   for (const run of session.runs) {
     log.appendChild(renderRun(run));
   }
+  if (liveRun) log.appendChild(renderLiveRun(liveRun));
   log.scrollTop = log.scrollHeight;
+}
+
+function renderLiveRun(run) {
+  const block = el("div", "run-block live");
+  const header = el("div", "run-header");
+  header.appendChild(el("div", "instruction", run.instruction));
+  const meta = el("div", "run-meta");
+  meta.appendChild(el("span", "badge running", "running"));
+  header.appendChild(meta);
+  block.appendChild(header);
+
+  if (run.actions.length) {
+    const list = el("div", "action-list");
+    for (const a of run.actions) list.appendChild(renderAction(null, a));
+    block.appendChild(list);
+  }
+  block.appendChild(el("div", "run-final working",
+    run.actions.length ? "Working…" : "Thinking…"));
+  return block;
 }
 
 function renderRun(run) {
@@ -508,7 +598,14 @@ function renderAction(run, action) {
   const tool = el("span", "tool", action.tool_name);
   const msg = el("span", "msg", action.message);
   row.append(dot, tool, msg);
-  row.onclick = () => openActionDetail(run, action);
+  if (run) {
+    row.onclick = () => openActionDetail(run, action);
+  } else {
+    // Streaming: the run isn't persisted yet, so the replay-based detail view
+    // has nothing to read. It becomes clickable when the run finishes.
+    row.classList.add("pending");
+    row.title = "Detail available once the run finishes";
+  }
   return row;
 }
 
@@ -519,12 +616,13 @@ async function openActionDetail(run, action) {
   $("#detail-dot").style.background = action.ok ? "var(--ok)" : "var(--fail)";
   $("#detail-message").textContent = action.message;
   const reasoning = $("#detail-reasoning");
-  if (action.reasoning) {
-    reasoning.textContent = action.reasoning;
-    reasoning.classList.remove("empty");
-  } else {
-    reasoning.classList.add("empty");
-  }
+  const hasReasoning = !!(action.reasoning || "").trim();
+  // Always show the section — an explicit "none recorded" reads as information,
+  // whereas hiding it looks like the panel is broken.
+  reasoning.classList.toggle("empty", !hasReasoning);
+  $("#detail-reasoning-body").textContent = hasReasoning
+    ? action.reasoning
+    : "No reasoning recorded for this step (the model acted without writing a thought, or thinking is off for this model).";
   $("#detail-before").innerHTML = "<span style='color:var(--text-faint)'>Loading…</span>";
   $("#detail-after").innerHTML = "";
   $("#detail-raw").textContent = JSON.stringify({ tool_input: action.tool_input, blocked_by: action.blocked_by, touched_ids: action.touched_ids }, null, 2);

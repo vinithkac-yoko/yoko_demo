@@ -14,6 +14,7 @@ Run:  PYTHONPATH=src uvicorn app:app --app-dir backend --port 8000
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -26,7 +27,7 @@ if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
 
 import agent
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from store import Store
 
@@ -154,18 +155,21 @@ def _view(sid: str) -> dict:
     }
 
 
-def _run_and_persist(sid: str, instruction: str) -> dict:
-    """Run an instruction to completion, persist the run + its actions, and
-    auto-save a new version if it made any successful change."""
+def _start_run(sid: str, instruction: str):
+    """Set up a run: resolve the live session, the active block, and the model,
+    then open a run row. Shared by the batch and streaming endpoints."""
     sess = _live(sid)
     row = store.get_session(sid) or {}
     key, pieces = _active_block(sid, sess)
     model = row.get("model") or None
-
     run_id = store.create_run(sid, instruction, model or agent.MODEL, row.get("version_id"))
-    result = agent.run_instruction(
-        sess, instruction, pieces or None, label=_block_label(sess, key) if key else "", model=model
-    )
+    label = _block_label(sess, key) if key else ""
+    return sess, row, pieces, model, label, run_id
+
+
+def _persist_run(sid: str, row: dict, run_id: str, instruction: str, result, sess) -> None:
+    """Persist a finished run: its actions, an auto-saved version if anything
+    succeeded, and the run's closing state."""
     for a in result.actions:
         store.add_action(
             run_id,
@@ -203,6 +207,14 @@ def _run_and_persist(sid: str, instruction: str) -> dict:
         stopped_reason=result.stopped_reason,
         version_after_id=version_after,
     )
+
+
+def _run_and_persist(sid: str, instruction: str) -> dict:
+    """Run an instruction to completion, persist the run + its actions, and
+    auto-save a new version if it made any successful change."""
+    sess, row, pieces, model, label, run_id = _start_run(sid, instruction)
+    result = agent.run_instruction(sess, instruction, pieces or None, label=label, model=model)
+    _persist_run(sid, row, run_id, instruction, result, sess)
     return {"run_id": run_id, **_view(sid)}
 
 
@@ -336,6 +348,49 @@ def run_instruction(sid: str, body: Instruction) -> dict:
     including the new run and its action log; a successful run auto-saves a
     new version."""
     return _run_and_persist(sid, body.text)
+
+
+@app.get("/api/sessions/{sid}/run/stream")
+def run_instruction_stream(sid: str, text: str):
+    """Same run, streamed as it happens (SSE).
+
+    Emits one ``action`` event per tool call — carrying the action *and* a
+    freshly rendered SVG, since the edit is already applied by then — so the
+    canvas and log update mid-run instead of jumping at the end. The terminal
+    ``done`` event carries the full session view, identical to what the POST
+    endpoint returns. GET (not POST) because that's what EventSource speaks.
+    """
+    sess, row, pieces, model, label, run_id = _start_run(sid, text)
+
+    def events():
+        def sse(kind: str, payload: dict) -> str:
+            return f"event: {kind}\ndata: {json.dumps(payload)}\n\n"
+
+        yield sse("start", {"run_id": run_id, "instruction": text})
+        result = None
+        for kind, item in agent.stream_instruction(
+            sess, text, pieces or None, label=label, model=model
+        ):
+            if kind == "action":
+                yield sse(
+                    "action",
+                    {
+                        "action": item.as_dict(),
+                        "svg": agent.render_svg_for(sess, pieces or None),
+                    },
+                )
+            else:
+                result = item
+        _persist_run(sid, row, run_id, text, result, sess)
+        yield sse("done", {"run_id": run_id, **_view(sid)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # Proxies (Railway included) will otherwise buffer the stream and
+        # deliver every event at once when the response closes.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/sessions/{sid}/save")

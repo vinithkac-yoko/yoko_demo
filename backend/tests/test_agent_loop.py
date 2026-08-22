@@ -369,11 +369,43 @@ def test_model_picker_thinking_is_model_aware(monkeypatch):
     agent._create(_Client(), [], "claude-haiku-4-5")
     assert "thinking" not in sent and sent["model"] == "claude-haiku-4-5"
 
+    # display=summarized is what makes reasoning non-empty: without it the API
+    # returns thinking blocks with empty text, so the action log shows nothing.
+    want = {"type": "adaptive", "display": "summarized"}
     agent._create(_Client(), [], "claude-opus-4-8")
-    assert sent["thinking"] == {"type": "adaptive"}
+    assert sent["thinking"] == want
+    assert sent["output_config"] == {"effort": agent.EFFORT}
 
     agent._create(_Client(), [], "claude-sonnet-5")
-    assert sent["thinking"] == {"type": "adaptive"}
+    assert sent["thinking"] == want
+
+
+def test_create_degrades_when_effort_rejected():
+    """An SDK/model that rejects output_config still gets thinking; one that
+    rejects thinking too still runs. Neither should fail the whole run."""
+    sent = {}
+
+    class _Msgs:
+        def __init__(self, reject):
+            self.reject = reject
+
+        def create(self, **kw):
+            if any(k in kw for k in self.reject):
+                raise TypeError("unexpected keyword argument")
+            sent.clear()
+            sent.update(kw)
+            return _Resp("end_turn", [])
+
+    class _Client:
+        def __init__(self, reject):
+            self.messages = _Msgs(reject)
+
+    agent._create(_Client({"output_config"}), [], "claude-sonnet-5")
+    assert "output_config" not in sent
+    assert sent["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+    agent._create(_Client({"output_config", "thinking"}), [], "claude-sonnet-5")
+    assert "thinking" not in sent and "output_config" not in sent
 
 
 def test_run_instruction_honours_requested_model(monkeypatch, session):
@@ -386,3 +418,105 @@ def test_run_instruction_honours_requested_model(monkeypatch, session):
     monkeypatch.setattr(agent, "_create", fake_create)
     agent.run_instruction(session, "hello", None, "", model="claude-opus-4-8")
     assert used == ["claude-opus-4-8"]
+
+
+# --- streaming + zero-action runs -------------------------------------------
+def test_stream_yields_each_action_before_the_final_result(monkeypatch, session):
+    """The stream must emit an action as soon as its edit is applied, so the
+    UI can re-render mid-run — not batch them up at the end."""
+    ids = _names(session)
+    calls = []
+
+    def fake_create(client, messages, model=None):
+        if not calls:
+            calls.append(1)
+            return _Resp(
+                "tool_use",
+                [
+                    _Block(type="thinking", thinking="move both points"),
+                    _Block(
+                        type="tool_use",
+                        id="t1",
+                        name="edit_object",
+                        input={"object_id": ids["A1"], "attrs": {"x": "5"}},
+                    ),
+                    _Block(
+                        type="tool_use",
+                        id="t2",
+                        name="edit_object",
+                        input={"object_id": ids["A2"], "attrs": {"x": "6"}},
+                    ),
+                ],
+            )
+        return _Resp("end_turn", [_Block(type="text", text="all set")])
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    events = list(agent.stream_instruction(session, "move them", None, ""))
+
+    kinds = [k for k, _ in events]
+    assert kinds == ["action", "action", "done"], "actions must stream before the result"
+
+    first, second = events[0][1], events[1][1]
+    assert (first.step_index, second.step_index) == (0, 1)
+    assert first.reasoning == "move both points"
+
+    result = events[-1][1]
+    assert result.stopped_reason == "done"
+    assert result.final_text == "all set"
+    assert len(result.actions) == 2
+
+
+def test_run_instruction_matches_the_stream(monkeypatch, session):
+    """The batch API is just the stream drained — same result either way."""
+
+    def fake_create(client, messages, model=None):
+        return _Resp("end_turn", [_Block(type="text", text="nothing to do")])
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    result = agent.run_instruction(session, "hello", None, "")
+    assert result.stopped_reason == "done"
+    assert result.final_text == "nothing to do"
+    assert result.actions == []
+
+
+def test_zero_action_run_surfaces_its_thinking(monkeypatch, session):
+    """A run that spends its whole budget thinking and never acts should show
+    what it was thinking, not a bare 'ran out of budget' with an empty log."""
+
+    def fake_create(client, messages, model=None):
+        return _Resp(
+            "max_tokens",
+            [_Block(type="thinking", thinking="I need to find the waist-to-hip points first")],
+        )
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    result = agent.run_instruction(session, "add a belt", None, "")
+    assert result.actions == []
+    assert "waist-to-hip" in result.final_text
+
+
+def test_zero_action_run_without_thinking_explains_the_budget(monkeypatch, session):
+    """With no thinking text to show, the note should still be actionable."""
+
+    def fake_create(client, messages, model=None):
+        return _Resp("max_tokens", [])
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    result = agent.run_instruction(session, "add a belt", None, "")
+    assert result.actions == []
+    assert "select a block" in result.final_text
+
+
+def test_stream_reports_errors_as_a_done_event(monkeypatch, session):
+    """A crash mid-run must arrive as a terminal event, keeping any actions
+    already applied — never propagate as an exception."""
+
+    def fake_create(client, messages, model=None):
+        raise RuntimeError("model exploded")
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    events = list(agent.stream_instruction(session, "hi", None, ""))
+    assert [k for k, _ in events] == ["done"]
+    result = events[0][1]
+    assert result.stopped_reason == "error"
+    assert "model exploded" in result.final_text
