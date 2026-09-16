@@ -211,7 +211,7 @@ def test_run_stream_emits_actions_then_done(client, monkeypatch):
     v = client.post("/api/patterns", json={"name": "S", "source": "blank"}).json()
     sid = v["session_id"]
 
-    def fake_stream(session, instruction, pieces=None, label="", model=None):
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
         a = agent_mod.Action(
             step_index=0,
             tool_name="add_point",
@@ -256,7 +256,7 @@ def test_streamed_run_is_persisted_like_a_batch_run(client, monkeypatch):
     v = client.post("/api/patterns", json={"name": "S", "source": "blank"}).json()
     sid = v["session_id"]
 
-    def fake_stream(session, instruction, pieces=None, label="", model=None):
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
         a = agent_mod.Action(
             step_index=0,
             tool_name="add_point",
@@ -280,3 +280,181 @@ def test_streamed_run_is_persisted_like_a_batch_run(client, monkeypatch):
     assert run["final_text"] == "Could not."
     assert [a["tool_name"] for a in run["actions"]] == ["add_point"]
     assert run["actions"][0]["reasoning"] == "because"
+
+
+# --- tuning: config, presets, ratings, compare, export -------------------------
+def test_config_defaults_expose_prompts_and_tools(client):
+    d = client.get("/api/config/defaults").json()
+    assert "You are a pattern-drafting agent" in d["config"]["system_prompt"]
+    names = {t["name"] for t in d["tools"]}
+    assert {"add_point", "split_piece", "merge_piece"} <= names
+    assert "medium" in d["efforts"] and "auto" in d["state_scopes"]
+
+
+def test_session_config_is_what_the_next_run_uses(client, monkeypatch):
+    """Editing the prompt has to actually reach the model, or the playground
+    is lying to you."""
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "T", "source": "blank"}).json()
+    sid = v["session_id"]
+
+    r = client.post(
+        f"/api/sessions/{sid}/config",
+        json={"config": {"system_prompt": "TUNED PROMPT", "effort": "low", "max_steps": 3}},
+    )
+    assert r.status_code == 200
+    assert client.get(f"/api/sessions/{sid}").json()["config"]["system_prompt"] == "TUNED PROMPT"
+
+    seen = {}
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
+        seen["system_prompt"] = config.system_prompt
+        seen["effort"] = config.effort
+        seen["max_steps"] = config.max_steps
+        yield ("done", agent_mod.RunResult(final_text="ok", actions=[], stopped_reason="done"))
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "go"}) as r:
+        list(r.iter_text())
+
+    assert seen == {"system_prompt": "TUNED PROMPT", "effort": "low", "max_steps": 3}
+
+
+def test_run_records_the_config_that_produced_it(client, monkeypatch):
+    """Provenance: editing the config later must not rewrite history."""
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "T", "source": "blank"}).json()
+    sid = v["session_id"]
+    client.post(f"/api/sessions/{sid}/config", json={"config": {"system_prompt": "FIRST"}})
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
+        yield ("done", agent_mod.RunResult(final_text="ok", actions=[], stopped_reason="done"))
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "one"}) as r:
+        list(r.iter_text())
+
+    # change the config, run again
+    client.post(f"/api/sessions/{sid}/config", json={"config": {"system_prompt": "SECOND"}})
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "two"}) as r:
+        list(r.iter_text())
+
+    runs = client.get(f"/api/sessions/{sid}").json()["runs"]
+    assert [r["config"]["system_prompt"] for r in runs] == ["FIRST", "SECOND"]
+
+
+def test_preset_crud(client):
+    created = client.post(
+        "/api/presets", json={"name": "terse", "config": {"effort": "low", "max_tokens": 4000}}
+    ).json()
+    assert created["name"] == "terse" and created["config"]["effort"] == "low"
+
+    pid = created["id"]
+    updated = client.put(
+        f"/api/presets/{pid}", json={"name": "terser", "config": {"effort": "low"}}
+    ).json()
+    assert updated["name"] == "terser"
+    assert [p["id"] for p in client.get("/api/presets").json()["presets"]] == [pid]
+
+    client.delete(f"/api/presets/{pid}")
+    assert client.get("/api/presets").json()["presets"] == []
+
+
+def test_preset_needs_a_name(client):
+    assert client.post("/api/presets", json={"name": "  ", "config": {}}).status_code == 400
+
+
+def test_rating_and_sample_export(client, monkeypatch):
+    """Rated runs are the corpus — export carries the instruction, the config
+    behind it, and the full action log."""
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "T", "source": "blank"}).json()
+    sid = v["session_id"]
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
+        a = agent_mod.Action(
+            step_index=0,
+            tool_name="add_point",
+            tool_input={"attrs": {"name": "Q"}},
+            reasoning="needed a reference",
+            ok=True,
+            message="added point",
+        )
+        yield ("action", a)
+        yield ("done", agent_mod.RunResult(final_text="done", actions=[a], stopped_reason="done"))
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "add one"}) as r:
+        list(r.iter_text())
+
+    run_id = client.get(f"/api/sessions/{sid}").json()["runs"][-1]["id"]
+    assert client.get("/api/samples/export.jsonl").text == "", "unrated runs aren't samples"
+
+    rated = client.post(f"/api/runs/{run_id}/rating", json={"rating": 1, "note": "clean"}).json()
+    assert rated["rating"] == 1 and rated["note"] == "clean"
+
+    import json as _json
+
+    rows = [_json.loads(x) for x in client.get("/api/samples/export.jsonl").text.splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["instruction"] == "add one"
+    assert rows[0]["rating"] == 1
+    assert rows[0]["actions"][0]["reasoning"] == "needed a reference"
+    assert "system_prompt" in rows[0]["config"]
+
+    # a thumbs-down is still a sample, and filtering works
+    client.post(f"/api/runs/{run_id}/rating", json={"rating": -1})
+    assert client.get("/api/samples/export.jsonl", params={"rating": 1}).text == ""
+    assert (
+        len(client.get("/api/samples/export.jsonl", params={"rating": -1}).text.splitlines()) == 1
+    )
+
+
+def test_rating_rejects_out_of_range(client, monkeypatch):
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "T", "source": "blank"}).json()
+    sid = v["session_id"]
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
+        yield ("done", agent_mod.RunResult(final_text="ok", actions=[], stopped_reason="done"))
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "x"}) as r:
+        list(r.iter_text())
+    run_id = client.get(f"/api/sessions/{sid}").json()["runs"][-1]["id"]
+    assert client.post(f"/api/runs/{run_id}/rating", json={"rating": 7}).status_code == 400
+
+
+def test_compare_two_runs_shows_the_config_delta(client, monkeypatch):
+    """The config diff is what attributes a behaviour change to a prompt or
+    parameter change."""
+    import agent as agent_mod
+
+    v = client.post("/api/patterns", json={"name": "T", "source": "blank"}).json()
+    sid = v["session_id"]
+
+    def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
+        yield ("done", agent_mod.RunResult(final_text="ok", actions=[], stopped_reason="done"))
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", fake_stream)
+
+    client.post(f"/api/sessions/{sid}/config", json={"config": {"effort": "low"}})
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "one"}) as r:
+        list(r.iter_text())
+    client.post(f"/api/sessions/{sid}/config", json={"config": {"effort": "high"}})
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "two"}) as r:
+        list(r.iter_text())
+
+    runs = client.get(f"/api/sessions/{sid}").json()["runs"]
+    a, b = runs[0]["id"], runs[1]["id"]
+    cmp = client.get(f"/api/runs/{a}/compare", params={"against": b}).json()
+
+    assert cmp["a"]["run"]["instruction"] == "one"
+    assert cmp["b"]["run"]["instruction"] == "two"
+    diff = {d["field"]: (d["a"], d["b"]) for d in cmp["config_diff"]}
+    assert diff["effort"] == ("low", "high")
+    assert "system_prompt" not in diff, "identical fields must not show as differences"

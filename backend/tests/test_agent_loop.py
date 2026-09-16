@@ -61,7 +61,7 @@ def test_tool_use_produces_one_action_with_its_reasoning(monkeypatch, session):
     pieces = pieces_for_key(session.pattern, "A")
     calls = {"n": 0}
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp(
@@ -103,7 +103,7 @@ def test_several_tool_calls_in_one_turn_share_the_preceding_thinking(monkeypatch
     ids = _names(session)
     calls = {"n": 0}
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp(
@@ -154,7 +154,7 @@ def test_a_later_thinking_block_updates_reasoning_for_the_next_action(monkeypatc
     ids = _names(session)
     calls = {"n": 0}
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp(
@@ -203,7 +203,7 @@ def test_a_later_thinking_block_updates_reasoning_for_the_next_action(monkeypatc
 def test_a_failed_action_is_recorded_not_dropped(monkeypatch, session):
     calls = {"n": 0}
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp(
@@ -240,7 +240,7 @@ def test_no_api_key_is_reported_not_attempted(monkeypatch, session):
 
 
 def test_max_steps_stops_the_run_and_keeps_what_happened(monkeypatch, session):
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         return _Resp(
             "tool_use",
             [
@@ -411,7 +411,7 @@ def test_create_degrades_when_effort_rejected():
 def test_run_instruction_honours_requested_model(monkeypatch, session):
     used = []
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         used.append(model)
         return _Resp("end_turn", [_Block(type="text", text="done")])
 
@@ -427,7 +427,7 @@ def test_stream_yields_each_action_before_the_final_result(monkeypatch, session)
     ids = _names(session)
     calls = []
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         if not calls:
             calls.append(1)
             return _Resp(
@@ -469,7 +469,7 @@ def test_stream_yields_each_action_before_the_final_result(monkeypatch, session)
 def test_run_instruction_matches_the_stream(monkeypatch, session):
     """The batch API is just the stream drained — same result either way."""
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         return _Resp("end_turn", [_Block(type="text", text="nothing to do")])
 
     monkeypatch.setattr(agent, "_create", fake_create)
@@ -483,7 +483,7 @@ def test_zero_action_run_surfaces_its_thinking(monkeypatch, session):
     """A run that spends its whole budget thinking and never acts should show
     what it was thinking, not a bare 'ran out of budget' with an empty log."""
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         return _Resp(
             "max_tokens",
             [_Block(type="thinking", thinking="I need to find the waist-to-hip points first")],
@@ -498,7 +498,7 @@ def test_zero_action_run_surfaces_its_thinking(monkeypatch, session):
 def test_zero_action_run_without_thinking_explains_the_budget(monkeypatch, session):
     """With no thinking text to show, the note should still be actionable."""
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         return _Resp("max_tokens", [])
 
     monkeypatch.setattr(agent, "_create", fake_create)
@@ -511,7 +511,7 @@ def test_stream_reports_errors_as_a_done_event(monkeypatch, session):
     """A crash mid-run must arrive as a terminal event, keeping any actions
     already applied — never propagate as an exception."""
 
-    def fake_create(client, messages, model=None):
+    def fake_create(client, messages, model=None, config=None):
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(agent, "_create", fake_create)
@@ -520,3 +520,102 @@ def test_stream_reports_errors_as_a_done_event(monkeypatch, session):
     result = events[0][1]
     assert result.stopped_reason == "error"
     assert "model exploded" in result.final_text
+
+
+# --- run configuration (the tuning surface) ---------------------------------
+def test_config_overrides_reach_the_api_call():
+    """The tuning surface is only real if every knob lands in the request."""
+    sent = {}
+
+    class _Msgs:
+        def create(self, **kw):
+            sent.clear()
+            sent.update(kw)
+            return _Resp("end_turn", [])
+
+    class _Client:
+        messages = _Msgs()
+
+    cfg = agent.RunConfig(
+        system_prompt="YOU ARE A TEST",
+        tool_descriptions={"add_point": "ONLY for test points"},
+        max_tokens=4321,
+        effort="xhigh",
+    )
+    agent._create(_Client(), [], "claude-sonnet-5", cfg)
+
+    assert sent["system"] == "YOU ARE A TEST"
+    assert sent["max_tokens"] == 4321
+    assert sent["output_config"] == {"effort": "xhigh"}
+    tools = {t["name"]: t["description"] for t in sent["tools"]}
+    assert tools["add_point"] == "ONLY for test points"
+    # untouched tools keep their built-in text
+    assert "split_piece" in tools and "Cut a piece into two" in tools["split_piece"]
+
+
+def test_tool_overrides_do_not_mutate_the_shared_schemas():
+    """A per-run override must not leak into the next run's defaults."""
+    before = {t["name"]: t["description"] for t in agent.TOOLS}
+    agent.RunConfig(tool_descriptions={"add_point": "scratch"}).tools()
+    after = {t["name"]: t["description"] for t in agent.TOOLS}
+    assert before == after
+
+
+def test_config_from_dict_clamps_and_rejects_junk():
+    """Configs arrive from a text box, so bad values must fall back rather
+    than reaching the API and failing the run."""
+    cfg = agent.RunConfig.from_dict(
+        {
+            "max_tokens": 10**9,  # above the cap
+            "max_steps": 0,  # below the floor
+            "effort": "turbo",  # not a real effort level
+            "model": "gpt-4",  # not a model we offer
+            "state_scope": "sideways",  # not a real scope
+            "system_prompt": "   ",  # blank doesn't wipe the default
+        }
+    )
+    assert cfg.max_tokens == 128000
+    assert cfg.max_steps == 1
+    assert cfg.effort == agent.EFFORT
+    assert cfg.model == ""
+    assert cfg.state_scope == "auto"
+    assert cfg.system_prompt == agent.SYSTEM_PROMPT
+
+
+def test_config_roundtrips_through_dict():
+    cfg = agent.RunConfig(system_prompt="custom", effort="low", send_image=False, max_steps=4)
+    assert agent.RunConfig.from_dict(cfg.as_dict()).as_dict() == cfg.as_dict()
+
+
+def test_state_scope_whole_ignores_the_block_selection(session):
+    """'whole' is the big token lever: it must override block scoping."""
+    pieces = pieces_for_key(session.pattern, "A")
+    scoped = agent._state_block(session, pieces, "Skirt", agent.RunConfig(state_scope="auto"))
+    whole = agent._state_block(session, pieces, "Skirt", agent.RunConfig(state_scope="whole"))
+    assert len(whole["text"]) > len(scoped["text"])
+
+
+def test_send_image_off_skips_the_render(session):
+    assert agent._render_png(session, None, agent.RunConfig(send_image=False)) is None
+
+
+def test_max_steps_comes_from_the_config(monkeypatch, session):
+    def fake_create(client, messages, model=None, config=None):
+        return _Resp(
+            "tool_use",
+            [
+                _Block(
+                    type="tool_use",
+                    id="t",
+                    name="add_variable",
+                    input={"name": f"#W{len(messages)}", "formula": "1"},
+                )
+            ],
+        )
+
+    monkeypatch.setattr(agent, "_create", fake_create)
+    result = agent.run_instruction(
+        session, "forever", None, "", config=agent.RunConfig(max_steps=2)
+    )
+    assert result.stopped_reason == "max_steps"
+    assert len(result.actions) == 2

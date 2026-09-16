@@ -625,10 +625,14 @@ def render_svg_for(session: PatternSession, pieces=None) -> str:
     )
 
 
-def _render_png(session: PatternSession, pieces=None) -> bytes | None:
-    """Rasterize to PNG for the vision input. Returns None if no raster backend
-    is installed — the agent then runs state-only (by design)."""
-    if not SEND_IMAGE:
+def _render_png(
+    session: PatternSession, pieces=None, config: RunConfig | None = None
+) -> bytes | None:
+    """Rasterize to PNG for the vision input. Returns None if the image is
+    switched off or no raster backend is installed — the agent then runs
+    state-only (by design)."""
+    cfg = config or RunConfig()
+    if not cfg.send_image:
         return None
     try:
         import cairosvg
@@ -636,10 +640,99 @@ def _render_png(session: PatternSession, pieces=None) -> bytes | None:
         return None
     try:
         return cairosvg.svg2png(
-            bytestring=render_svg_for(session, pieces).encode(), output_width=VISION_WIDTH
+            bytestring=render_svg_for(session, pieces).encode(), output_width=cfg.vision_width
         )
     except Exception:
         return None
+
+
+# --- run configuration (the tuning surface) --------------------------------
+# Everything that steers a run and can be changed without redeploying: the two
+# prompt surfaces (system prompt, per-tool descriptions) and the parameters.
+# The env-var constants above are only the *defaults* — a run resolves its own
+# config and the store keeps a verbatim copy, so a result stays traceable to
+# the exact prompt and parameters that produced it.
+STATE_SCOPES = ("auto", "whole")
+
+
+@dataclass
+class RunConfig:
+    # Defaults are read at instantiation, not at import, so the env-var
+    # constants above stay the single source of truth (and remain patchable).
+    system_prompt: str = field(default_factory=lambda: SYSTEM_PROMPT)
+    # tool name -> replacement description. Absent tools keep the built-in text.
+    tool_descriptions: dict[str, str] = field(default_factory=dict)
+    model: str = ""
+    max_tokens: int = field(default_factory=lambda: MAX_TOKENS)
+    effort: str = field(default_factory=lambda: EFFORT)
+    max_steps: int = field(default_factory=lambda: MAX_ITERATIONS)
+    send_image: bool = field(default_factory=lambda: SEND_IMAGE)
+    vision_width: int = field(default_factory=lambda: VISION_WIDTH)
+    # "auto" narrows the state to the selected block; "whole" always sends the
+    # entire pattern, which is the difference between ~6 objects and ~425.
+    state_scope: str = "auto"
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> RunConfig:
+        """Build from (possibly partial, possibly untrusted) JSON, falling back
+        to defaults per field so an old or hand-edited config still runs."""
+        d = dict(data or {})
+        cfg = cls()
+        if isinstance(d.get("system_prompt"), str) and d["system_prompt"].strip():
+            cfg.system_prompt = d["system_prompt"]
+        if isinstance(d.get("tool_descriptions"), dict):
+            cfg.tool_descriptions = {
+                k: v for k, v in d["tool_descriptions"].items() if isinstance(v, str) and v.strip()
+            }
+        if d.get("model") in MODEL_IDS:
+            cfg.model = d["model"]
+        for name, lo, hi in (
+            ("max_tokens", 256, 128000),
+            ("max_steps", 1, 60),
+            ("vision_width", 200, 2000),
+        ):
+            try:
+                if d.get(name) is not None:
+                    setattr(cfg, name, max(lo, min(hi, int(d[name]))))
+            except (TypeError, ValueError):
+                pass
+        if d.get("effort") in ("low", "medium", "high", "xhigh", "max"):
+            cfg.effort = d["effort"]
+        if d.get("send_image") is not None:
+            cfg.send_image = bool(d["send_image"])
+        if d.get("state_scope") in STATE_SCOPES:
+            cfg.state_scope = d["state_scope"]
+        return cfg
+
+    def as_dict(self) -> dict:
+        return {
+            "system_prompt": self.system_prompt,
+            "tool_descriptions": dict(self.tool_descriptions),
+            "model": self.model or MODEL,
+            "max_tokens": self.max_tokens,
+            "effort": self.effort,
+            "max_steps": self.max_steps,
+            "send_image": self.send_image,
+            "vision_width": self.vision_width,
+            "state_scope": self.state_scope,
+        }
+
+    def tools(self) -> list[dict[str, Any]]:
+        """The tool schemas with any description overrides applied. Tool text is
+        a per-tool mini-prompt — usually the better place to fix a tool the
+        model keeps misusing."""
+        if not self.tool_descriptions:
+            return TOOLS
+        out = []
+        for t in TOOLS:
+            override = self.tool_descriptions.get(t["name"])
+            out.append({**t, "description": override} if override else t)
+        return out
+
+
+def default_config() -> dict:
+    """The built-in config, for the UI to show and reset to."""
+    return RunConfig().as_dict()
 
 
 # --- the action log --------------------------------------------------------
@@ -686,7 +779,13 @@ class RunResult:
         }
 
 
-def _state_block(session: PatternSession, pieces=None, label: str = "") -> dict:
+def _state_block(
+    session: PatternSession, pieces=None, label: str = "", config: RunConfig | None = None
+) -> dict:
+    # state_scope="whole" ignores the block selection and sends the entire
+    # pattern — the single biggest lever on per-turn token cost.
+    if config is not None and config.state_scope == "whole":
+        pieces = None
     if pieces:
         state = block_state(
             session.pattern,
@@ -724,13 +823,17 @@ def _state_delta(session: PatternSession, pieces, label: str, ids: set[int]) -> 
 
 
 def _instruction_turn(
-    session: PatternSession, instruction: str, pieces=None, label: str = ""
+    session: PatternSession,
+    instruction: str,
+    pieces=None,
+    label: str = "",
+    config: RunConfig | None = None,
 ) -> list[dict]:
     content: list[dict] = [
         {"type": "text", "text": instruction},
-        _state_block(session, pieces, label),
+        _state_block(session, pieces, label, config),
     ]
-    png = _render_png(session, pieces)
+    png = _render_png(session, pieces, config)
     if png is not None:
         content.append(
             {
@@ -752,8 +855,10 @@ def _rejected(e: Exception) -> bool:
     return "BadRequest" in name or "TypeError" in name
 
 
-def _create(client, messages: list[dict], model: str | None = None):
-    """One model call.
+def _create(
+    client, messages: list[dict], model: str | None = None, config: RunConfig | None = None
+):
+    """One model call, using ``config``'s prompt, tools and parameters.
 
     Two request options degrade independently, because either can be rejected
     by an older SDK or a model that doesn't support it, and neither is worth
@@ -765,21 +870,28 @@ def _create(client, messages: list[dict], model: str | None = None):
     * ``output_config.effort`` — bounds deliberation so the loop reaches a tool
       call instead of spending the whole token budget thinking.
     """
-    model = model or MODEL
+    cfg = config or RunConfig()
+    model = model or cfg.model or MODEL
     kwargs = dict(
-        model=model, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, tools=TOOLS, messages=messages
+        model=model,
+        max_tokens=cfg.max_tokens,
+        system=cfg.system_prompt,
+        tools=cfg.tools(),
+        messages=messages,
     )
     if not any(m in model for m in _ADAPTIVE_THINKING):
         return client.messages.create(**kwargs)
 
     thinking = {"type": "adaptive", "display": "summarized"}
     try:
-        return client.messages.create(thinking=thinking, output_config={"effort": EFFORT}, **kwargs)
+        return client.messages.create(
+            thinking=thinking, output_config={"effort": cfg.effort}, **kwargs
+        )
     except Exception as e:
         if not _rejected(e):
             raise
         log.warning(
-            "effort=%s rejected (%s: %s) — retrying without it", EFFORT, type(e).__name__, e
+            "effort=%s rejected (%s: %s) — retrying without it", cfg.effort, type(e).__name__, e
         )
     try:
         return client.messages.create(thinking=thinking, **kwargs)
@@ -798,6 +910,7 @@ def run_instruction(
     pieces=None,
     label: str = "",
     model: str | None = None,
+    config: RunConfig | None = None,
 ) -> RunResult:
     """Run one typed instruction to completion. Never raises — any failure
     comes back as a ``RunResult`` with ``stopped_reason`` set, so the caller
@@ -807,7 +920,7 @@ def run_instruction(
     only the final result. Callers that want to show progress as it happens
     should iterate that generator instead."""
     result: RunResult | None = None
-    for kind, payload in stream_instruction(session, instruction, pieces, label, model):
+    for kind, payload in stream_instruction(session, instruction, pieces, label, model, config):
         if kind == "done":
             result = payload
     assert result is not None  # the generator always ends with a "done" event
@@ -820,6 +933,7 @@ def stream_instruction(
     pieces=None,
     label: str = "",
     model: str | None = None,
+    config: RunConfig | None = None,
 ):
     """Run one instruction, yielding progress as it happens.
 
@@ -844,7 +958,9 @@ def stream_instruction(
         return
     actions: list[Action] = []
     try:
-        yield from _stream_instruction(session, instruction, pieces, label, model, actions)
+        yield from _stream_instruction(
+            session, instruction, pieces, label, model, actions, config or RunConfig()
+        )
     except Exception as e:
         log.exception("run failed")
         yield (
@@ -878,18 +994,19 @@ def _stream_instruction(
     label: str,
     model: str | None,
     actions: list[Action],
+    config: RunConfig,
 ):
     import anthropic
 
     client = anthropic.Anthropic()
     messages: list[dict] = [
-        {"role": "user", "content": _instruction_turn(session, instruction, pieces, label)}
+        {"role": "user", "content": _instruction_turn(session, instruction, pieces, label, config)}
     ]
     step = 0
     last_reasoning = ""
 
-    for _ in range(MAX_ITERATIONS):
-        response = _create(client, messages, model)
+    for _ in range(config.max_steps):
+        response = _create(client, messages, model, config)
         if response.stop_reason != "tool_use":
             text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
             thinking = "".join(

@@ -87,7 +87,40 @@ CREATE TABLE IF NOT EXISTS actions (
     touched_ids  TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS ix_actions_run ON actions(run_id, step_index);
+CREATE TABLE IF NOT EXISTS presets (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    config      TEXT NOT NULL DEFAULT '{}',   -- the full RunConfig as JSON
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
 """
+
+# Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
+# EXISTS", and the deployed database already holds real runs, so they're
+# applied conditionally rather than by rewriting _SCHEMA.
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    # (table, column, DDL)
+    ("runs", "config", "ALTER TABLE runs ADD COLUMN config TEXT NOT NULL DEFAULT '{}'"),
+    ("runs", "preset_name", "ALTER TABLE runs ADD COLUMN preset_name TEXT NOT NULL DEFAULT ''"),
+    # -1 down, 0 unrated, 1 up — the tuning signal for collecting good samples.
+    ("runs", "rating", "ALTER TABLE runs ADD COLUMN rating INTEGER NOT NULL DEFAULT 0"),
+    ("runs", "note", "ALTER TABLE runs ADD COLUMN note TEXT NOT NULL DEFAULT ''"),
+    ("sessions", "config", "ALTER TABLE sessions ADD COLUMN config TEXT NOT NULL DEFAULT '{}'"),
+    (
+        "sessions",
+        "preset_name",
+        "ALTER TABLE sessions ADD COLUMN preset_name TEXT NOT NULL DEFAULT ''",
+    ),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in _MIGRATIONS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(ddl)
+    conn.commit()
 
 
 def _now() -> float:
@@ -105,6 +138,7 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -246,16 +280,43 @@ class Store:
 
     # --- runs + actions (the instruction/action log) --------------------------
     def create_run(
-        self, session_id: str, instruction: str, model: str, version_before_id: str | None
+        self,
+        session_id: str,
+        instruction: str,
+        model: str,
+        version_before_id: str | None,
+        *,
+        config: dict | None = None,
+        preset_name: str = "",
     ) -> str:
+        """Open a run. ``config`` is the fully-resolved RunConfig used for it —
+        stored verbatim so a result stays traceable to the exact prompt and
+        parameters that produced it, even after the preset is edited."""
         rid = _id("run")
         self.conn.execute(
-            """INSERT INTO runs(id,session_id,instruction,model,version_before_id,created_at)
-               VALUES(?,?,?,?,?,?)""",
-            (rid, session_id, instruction, model, version_before_id, _now()),
+            """INSERT INTO runs(id,session_id,instruction,model,version_before_id,created_at,
+                                config,preset_name)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                rid,
+                session_id,
+                instruction,
+                model,
+                version_before_id,
+                _now(),
+                json.dumps(config or {}),
+                preset_name,
+            ),
         )
         self.conn.commit()
         return rid
+
+    def rate_run(self, run_id: str, rating: int, note: str = "") -> None:
+        """-1 down, 0 unrated, 1 up."""
+        self.conn.execute(
+            "UPDATE runs SET rating=?, note=? WHERE id=?", (int(rating), note, run_id)
+        )
+        self.conn.commit()
 
     def finish_run(
         self, run_id: str, *, final_text: str, stopped_reason: str, version_after_id: str | None
@@ -300,15 +361,90 @@ class Store:
         self.conn.commit()
         return aid
 
+    @staticmethod
+    def _run_row(r: sqlite3.Row) -> dict[str, Any]:
+        d = dict(r)
+        d["config"] = json.loads(d.get("config") or "{}")
+        return d
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         r = self.conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-        return dict(r) if r else None
+        return self._run_row(r) if r else None
 
     def list_runs(self, session_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM runs WHERE session_id=? ORDER BY created_at", (session_id,)
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [self._run_row(r) for r in rows]
+
+    def list_rated_runs(self, rating: int | None = None) -> list[dict[str, Any]]:
+        """Runs carrying a rating, newest first — the corpus for sample export.
+        ``rating=None`` returns everything rated either way."""
+        if rating is None:
+            rows = self.conn.execute(
+                "SELECT * FROM runs WHERE rating != 0 ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM runs WHERE rating=? ORDER BY created_at DESC", (int(rating),)
+            ).fetchall()
+        return [self._run_row(r) for r in rows]
+
+    # --- presets (saved prompt/parameter configs) -----------------------------
+    def create_preset(self, name: str, config: dict) -> str:
+        pid = _id("pre")
+        t = _now()
+        self.conn.execute(
+            "INSERT INTO presets(id,name,config,created_at,updated_at) VALUES(?,?,?,?,?)",
+            (pid, name, json.dumps(config), t, t),
+        )
+        self.conn.commit()
+        return pid
+
+    def update_preset(self, preset_id: str, *, name: str | None = None, config: dict | None = None):
+        if name is not None:
+            self.conn.execute(
+                "UPDATE presets SET name=?, updated_at=? WHERE id=?", (name, _now(), preset_id)
+            )
+        if config is not None:
+            self.conn.execute(
+                "UPDATE presets SET config=?, updated_at=? WHERE id=?",
+                (json.dumps(config), _now(), preset_id),
+            )
+        self.conn.commit()
+
+    def get_preset(self, preset_id: str) -> dict[str, Any] | None:
+        r = self.conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["config"] = json.loads(d["config"])
+        return d
+
+    def list_presets(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM presets ORDER BY updated_at DESC").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["config"] = json.loads(d["config"])
+            out.append(d)
+        return out
+
+    def delete_preset(self, preset_id: str) -> None:
+        self.conn.execute("DELETE FROM presets WHERE id=?", (preset_id,))
+        self.conn.commit()
+
+    # --- the session's working config (unsaved edits live here) ---------------
+    def set_session_config(self, session_id: str, config: dict, preset_name: str = "") -> None:
+        self.conn.execute(
+            "UPDATE sessions SET config=?, preset_name=?, updated_at=? WHERE id=?",
+            (json.dumps(config), preset_name, _now(), session_id),
+        )
+        self.conn.commit()
+
+    def get_session_config(self, session_id: str) -> dict:
+        r = self.conn.execute("SELECT config FROM sessions WHERE id=?", (session_id,)).fetchone()
+        return json.loads(r["config"]) if r and r["config"] else {}
 
     def list_actions(self, run_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(

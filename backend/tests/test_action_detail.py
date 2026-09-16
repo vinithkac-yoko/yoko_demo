@@ -54,7 +54,7 @@ def test_action_detail_shows_reasoning_and_before_after(wired, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_create(client_, messages, model=None):
+    def fake_create(client_, messages, model=None, config=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp(
@@ -103,7 +103,7 @@ def test_action_detail_replay_is_stable_across_multiple_calls(wired, monkeypatch
 
     calls = {"n": 0}
 
-    def fake_create(client_, messages, model=None):
+    def fake_create(client_, messages, model=None, config=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return _Resp(

@@ -15,6 +15,7 @@ Run:  PYTHONPATH=src uvicorn app:app --app-dir backend --port 8000
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -44,6 +45,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 APP_DIR = ROOT / "app"
 DEFAULT_MEAS = "aldrich_measurements.vst"
 
+log = logging.getLogger("vla.app")
 app = FastAPI(title="Pattern Drafting Workspace")
 store = Store()
 
@@ -82,6 +84,21 @@ class Rename(BaseModel):
 
 class SetModel(BaseModel):
     model: str
+
+
+class ConfigBody(BaseModel):
+    config: dict = {}
+    preset_name: str = ""
+
+
+class PresetBody(BaseModel):
+    name: str = ""
+    config: dict = {}
+
+
+class RatingBody(BaseModel):
+    rating: int = 0
+    note: str = ""
 
 
 # --- helpers -----------------------------------------------------------------
@@ -152,19 +169,34 @@ def _view(sid: str) -> dict:
         "svg": agent.render_svg_for(sess, pieces or None),
         "runs": runs,
         "versions": store.list_versions(pattern_id) if pattern_id else [],
+        # The tuning surface: the session's working config (what the next run
+        # will use) and the preset it came from, if any.
+        "config": agent.RunConfig.from_dict(store.get_session_config(sid)).as_dict(),
+        "preset_name": row.get("preset_name") or "",
     }
 
 
 def _start_run(sid: str, instruction: str):
-    """Set up a run: resolve the live session, the active block, and the model,
-    then open a run row. Shared by the batch and streaming endpoints."""
+    """Set up a run: resolve the live session, the active block, the model and
+    the tuning config, then open a run row. The run stores the *resolved*
+    config verbatim, so a result stays traceable to the exact prompt and
+    parameters behind it even after the preset is edited or deleted."""
     sess = _live(sid)
     row = store.get_session(sid) or {}
     key, pieces = _active_block(sid, sess)
-    model = row.get("model") or None
-    run_id = store.create_run(sid, instruction, model or agent.MODEL, row.get("version_id"))
+    config = agent.RunConfig.from_dict(store.get_session_config(sid))
+    # The header model picker stays authoritative over the config's model.
+    model = row.get("model") or config.model or None
     label = _block_label(sess, key) if key else ""
-    return sess, row, pieces, model, label, run_id
+    run_id = store.create_run(
+        sid,
+        instruction,
+        model or agent.MODEL,
+        row.get("version_id"),
+        config={**config.as_dict(), "model": model or agent.MODEL},
+        preset_name=row.get("preset_name") or "",
+    )
+    return sess, row, pieces, model, label, run_id, config
 
 
 def _persist_run(sid: str, row: dict, run_id: str, instruction: str, result, sess) -> None:
@@ -212,8 +244,10 @@ def _persist_run(sid: str, row: dict, run_id: str, instruction: str, result, ses
 def _run_and_persist(sid: str, instruction: str) -> dict:
     """Run an instruction to completion, persist the run + its actions, and
     auto-save a new version if it made any successful change."""
-    sess, row, pieces, model, label, run_id = _start_run(sid, instruction)
-    result = agent.run_instruction(sess, instruction, pieces or None, label=label, model=model)
+    sess, row, pieces, model, label, run_id, config = _start_run(sid, instruction)
+    result = agent.run_instruction(
+        sess, instruction, pieces or None, label=label, model=model, config=config
+    )
     _persist_run(sid, row, run_id, instruction, result, sess)
     return {"run_id": run_id, **_view(sid)}
 
@@ -360,7 +394,7 @@ def run_instruction_stream(sid: str, text: str):
     ``done`` event carries the full session view, identical to what the POST
     endpoint returns. GET (not POST) because that's what EventSource speaks.
     """
-    sess, row, pieces, model, label, run_id = _start_run(sid, text)
+    sess, row, pieces, model, label, run_id, config = _start_run(sid, text)
 
     def events():
         def sse(kind: str, payload: dict) -> str:
@@ -369,7 +403,7 @@ def run_instruction_stream(sid: str, text: str):
         yield sse("start", {"run_id": run_id, "instruction": text})
         result = None
         for kind, item in agent.stream_instruction(
-            sess, text, pieces or None, label=label, model=model
+            sess, text, pieces or None, label=label, model=model, config=config
         ):
             if kind == "action":
                 yield sse(
@@ -390,6 +424,151 @@ def run_instruction_stream(sid: str, text: str):
         # Proxies (Railway included) will otherwise buffer the stream and
         # deliver every event at once when the response closes.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# --- tuning: config, presets, ratings, comparison -----------------------------
+@app.get("/api/config/defaults")
+def config_defaults() -> dict:
+    """The built-in prompt/parameters, for the editor to show and reset to.
+    Tool schemas come along so their descriptions are editable too — a tool's
+    description is a per-tool prompt, and usually the better place to fix a
+    tool the model keeps misusing."""
+    return {
+        "config": agent.default_config(),
+        "tools": [{"name": t["name"], "description": t["description"]} for t in agent.TOOLS],
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "state_scopes": list(agent.STATE_SCOPES),
+        "models": agent.MODELS,
+    }
+
+
+@app.post("/api/sessions/{sid}/config")
+def set_session_config(sid: str, body: ConfigBody) -> dict:
+    """Set the session's working config — including unsaved edits. Runs read
+    it, so what you see in the editor is what the next run uses."""
+    if not store.get_session(sid):
+        raise HTTPException(404, "session not found")
+    config = agent.RunConfig.from_dict(body.config).as_dict()
+    store.set_session_config(sid, config, body.preset_name or "")
+    return {"config": config, "preset_name": body.preset_name or ""}
+
+
+@app.get("/api/presets")
+def list_presets() -> dict:
+    return {"presets": store.list_presets()}
+
+
+@app.post("/api/presets")
+def create_preset(body: PresetBody) -> dict:
+    if not body.name.strip():
+        raise HTTPException(400, "preset needs a name")
+    pid = store.create_preset(body.name.strip(), agent.RunConfig.from_dict(body.config).as_dict())
+    return store.get_preset(pid)
+
+
+@app.put("/api/presets/{preset_id}")
+def update_preset(preset_id: str, body: PresetBody) -> dict:
+    if not store.get_preset(preset_id):
+        raise HTTPException(404, "preset not found")
+    store.update_preset(
+        preset_id,
+        name=body.name.strip() or None,
+        config=agent.RunConfig.from_dict(body.config).as_dict(),
+    )
+    return store.get_preset(preset_id)
+
+
+@app.delete("/api/presets/{preset_id}")
+def delete_preset(preset_id: str) -> dict:
+    store.delete_preset(preset_id)
+    return {"ok": True}
+
+
+@app.post("/api/runs/{run_id}/rating")
+def rate_run(run_id: str, body: RatingBody) -> dict:
+    """Mark a run good or bad. This is the sample-collection signal — rated
+    runs are what `/api/samples/export.jsonl` emits."""
+    if not store.get_run(run_id):
+        raise HTTPException(404, "run not found")
+    if body.rating not in (-1, 0, 1):
+        raise HTTPException(400, "rating must be -1, 0 or 1")
+    store.rate_run(run_id, body.rating, body.note or "")
+    return store.get_run(run_id)
+
+
+@app.get("/api/runs/{run_id}/compare")
+def compare_runs(run_id: str, against: str) -> dict:
+    """Two runs side by side: their action logs, closing state, and the config
+    fields that differ. The config delta is the point — it's what attributes a
+    behaviour change to a prompt or parameter change."""
+    a, b = store.get_run(run_id), store.get_run(against)
+    if not a or not b:
+        raise HTTPException(404, "run not found")
+
+    def side(run: dict) -> dict:
+        return {
+            "run": run,
+            "actions": store.list_actions(run["id"]),
+            "svg": _version_svg(run.get("version_after_id")),
+        }
+
+    return {"a": side(a), "b": side(b), "config_diff": _config_diff(a["config"], b["config"])}
+
+
+def _config_diff(a: dict, b: dict) -> list[dict]:
+    """Field-by-field differences between two run configs."""
+    out = []
+    for key in sorted(set(a) | set(b)):
+        av, bv = a.get(key), b.get(key)
+        if av != bv:
+            out.append({"field": key, "a": av, "b": bv})
+    return out
+
+
+def _version_svg(version_id: str | None) -> str:
+    """Render a stored version, for the comparison's 'what did it produce' pane."""
+    if not version_id:
+        return ""
+    ver = store.get_version(version_id)
+    if not ver:
+        return ""
+    try:
+        pattern = parse_pattern(ver["xml"])
+        sess = PatternSession(pattern, _measurements(ver.get("measurements", "")))
+        return agent.render_svg_for(sess)
+    except Exception:
+        log.exception("could not render version %s", version_id)
+        return ""
+
+
+@app.get("/api/samples/export.jsonl")
+def export_samples(rating: int | None = None) -> Response:
+    """Rated runs as JSONL — one object per run, carrying the instruction, the
+    config that produced it, the full action log with reasoning, and the
+    rating. This is the corpus you collect while tuning."""
+    lines = []
+    for run in store.list_rated_runs(rating):
+        lines.append(
+            json.dumps(
+                {
+                    "run_id": run["id"],
+                    "instruction": run["instruction"],
+                    "rating": run["rating"],
+                    "note": run.get("note", ""),
+                    "preset_name": run.get("preset_name", ""),
+                    "config": run["config"],
+                    "stopped_reason": run["stopped_reason"],
+                    "final_text": run["final_text"],
+                    "actions": store.list_actions(run["id"]),
+                },
+                ensure_ascii=False,
+            )
+        )
+    return Response(
+        content="\n".join(lines),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="samples.jsonl"'},
     )
 
 
