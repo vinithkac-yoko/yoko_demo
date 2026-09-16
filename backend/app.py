@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import time
 from pathlib import Path
 
 # Make the headless engine importable without installing it or relying on
@@ -48,6 +50,28 @@ DEFAULT_MEAS = "aldrich_measurements.vst"
 log = logging.getLogger("vla.app")
 app = FastAPI(title="Pattern Drafting Workspace")
 store = Store()
+
+
+def _build_stamp() -> str:
+    """Identify the running build, so "did my change deploy?" is answerable
+    without guessing. Railway sets the commit env var; falling back to the
+    newest source mtime still distinguishes one deploy from another."""
+    for var in ("RAILWAY_GIT_COMMIT_SHA", "SOURCE_COMMIT", "GIT_COMMIT"):
+        sha = os.getenv(var)
+        if sha:
+            return sha[:7]
+    try:
+        newest = max(
+            p.stat().st_mtime
+            for p in (APP_DIR / "index.html", Path(__file__), Path(__file__).parent / "agent.py")
+            if p.exists()
+        )
+        return time.strftime("%Y-%m-%d %H:%M", time.gmtime(newest))
+    except Exception:
+        return "unknown"
+
+
+BUILD = _build_stamp()
 
 # Live working sessions (the evaluated pattern in memory), keyed by session id.
 _LIVE: dict[str, PatternSession] = {}
@@ -695,7 +719,24 @@ def health() -> str:
     return "ok"
 
 
+@app.get("/api/build")
+def build_info() -> dict:
+    """What's actually running. ``features`` lists capabilities added over
+    time, so hitting this endpoint answers "did my change deploy?" directly
+    instead of inferring it from the UI."""
+    return {
+        "build": BUILD,
+        "features": ["streaming-runs", "tuning-config", "presets", "ratings", "compare"],
+        "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY")),
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
+def index() -> Response:
     idx = APP_DIR / "index.html"
-    return idx.read_text() if idx.exists() else "<h1>App not built</h1>"
+    html = idx.read_text() if idx.exists() else "<h1>App not built</h1>"
+    # The app is one HTML file that changes on every deploy, and a stale copy
+    # looks exactly like "my changes didn't ship". Never let it be cached.
+    return HTMLResponse(
+        html, headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"}
+    )

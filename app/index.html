@@ -46,6 +46,10 @@
   .lib-header h1 { font-size: 20px; margin: 0; }
   .lib-actions { display: flex; gap: 8px; }
   .lib-list { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  #build-stamp {
+    max-width: 900px; margin: 18px auto 0; font-size: 11px; color: var(--text-faint);
+    font-family: var(--mono); text-align: right;
+  }
   .lib-item {
     display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
@@ -299,6 +303,7 @@
     </div>
   </div>
   <div class="lib-list" id="lib-list"></div>
+  <div id="build-stamp" title="The build running on the server — check this after a deploy"></div>
 </div>
 
 <!-- ============================= WORKSPACE ============================== -->
@@ -479,10 +484,23 @@ async function api(method, path, body) {
 }
 
 // --- library ------------------------------------------------------------
+// Shows which build the server is running. A stale page after a deploy looks
+// identical to "my change didn't ship", so make the distinction visible.
+async function showBuild() {
+  try {
+    const b = await api("GET", "/api/build");
+    $("#build-stamp").textContent =
+      `build ${b.build} · ${b.features.length} features${b.has_api_key ? "" : " · no API key set"}`;
+  } catch {
+    $("#build-stamp").textContent = "build: older version (no /api/build) — redeploy needed";
+  }
+}
+
 async function showLibrary() {
   localStorage.removeItem("vla_session_id");
   $("#workspace").classList.remove("active");
   $("#library").classList.add("active");
+  showBuild();
   const data = await api("GET", "/api/patterns");
   const list = $("#lib-list");
   list.innerHTML = "";
