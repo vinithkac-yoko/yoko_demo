@@ -1,0 +1,14 @@
+# Root requirements — used by Railway (Nixpacks) to build the app.
+# NOTE: the engine (src/seamly_engine) is NOT pip-installed here. Nixpacks
+# copies only requirements.txt during the install phase (for layer caching),
+# so `pip install -e .` at that point would fail — pyproject.toml and src/
+# aren't there yet. Instead src/ is put on PYTHONPATH at runtime: once via
+# the start command below, and belt-and-braces in backend/app.py itself,
+# since Railway doesn't always apply an inline env prefix to the start
+# command. These are the PyPI deps only.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2
+anthropic>=0.69          # agent loop (Messages API tool use + adaptive thinking + vision)
+cairosvg>=2.7             # optional raster render for vision; needs libcairo at runtime
+python-multipart>=0.0.9   # file upload (pattern import)
