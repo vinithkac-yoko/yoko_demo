@@ -97,7 +97,26 @@ oracle, grading, curved split edges — are listed honestly in
 
 ## Deploy (Railway)
 
-The repo is Railway-ready (Nixpacks):
+**The `Dockerfile` is the build.** Railway takes a Dockerfile over its own
+auto-detection whichever builder the service is set to (Railpack or Nixpacks),
+which is the point: the repo root has both a `pyproject.toml` (the engine's
+package manifest) and a `requirements.txt` (the app's deps), and letting a
+builder guess between them is what broke deploys before. If a build fails with
+*"Railpack failed to prepare the build"*, the service is ignoring the
+Dockerfile — set **Settings → Build → Builder** to Dockerfile.
+
+The image installs `libcairo2` (so the pattern rasterizes for the vision
+input), puts `src/` on `PYTHONPATH` rather than pip-installing the engine, and
+includes `tests/fixtures/` — despite the path, that's runtime data: the
+bundled sample pattern and the default measurement table.
+
+Set `ANTHROPIC_API_KEY` in the service variables. `GET /api/build` reports
+which build is live, and the library screen shows it too.
+
+<details>
+<summary>Previous Nixpacks setup (superseded by the Dockerfile)</summary>
+
+The repo also still carries `nixpacks.toml` and a `Procfile`:
 
 * `requirements.txt` (root) has the backend's PyPI deps; `Procfile` /
   `nixpacks.toml` start `uvicorn` bound to `$PORT`. The engine
@@ -113,6 +132,8 @@ The repo is Railway-ready (Nixpacks):
   Python-project auto-detection from picking that instead and skipping
   FastAPI/the Anthropic SDK.
 * Set the `ANTHROPIC_API_KEY` variable in the Railway service.
+
+</details>
 
 ### Persisting your patterns
 

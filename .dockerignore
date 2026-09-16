@@ -1,0 +1,21 @@
+# Keep the build context small and the image reproducible.
+.git/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local SQLite state must never be baked into the image — on Railway the
+# database lives on the mounted volume (VLA_DB), not in the filesystem layer.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+.DS_Store
+.idea/
+.vscode/
