@@ -16,9 +16,9 @@ nixPkgs = ["python311", "cairo", "pkg-config"]
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
 
-# --app-dir backend puts the FastAPI app on the path; PYTHONPATH=src makes
-# seamly_engine importable (backend/app.py also inserts it itself as a
-# belt-and-braces fallback, since Railway doesn't always apply an inline
-# env prefix to the start command).
+# serve.py reads $PORT in Python and sets up both import roots itself. The
+# previous `uvicorn ... --port ${PORT:-8000}` form only worked when the start
+# command went through a shell — Railway execs it directly, so uvicorn got
+# the literal string "${PORT:-8000}" and refused to start.
 [start]
-cmd = "PYTHONPATH=src uvicorn app:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = "python backend/serve.py"

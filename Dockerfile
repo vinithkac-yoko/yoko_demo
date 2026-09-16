@@ -33,6 +33,6 @@ COPY tests/fixtures/ ./tests/fixtures/
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1
 
-# Railway injects $PORT; the default keeps `docker run -p 8000:8000` working.
-# Shell form, because $PORT has to be expanded at runtime rather than baked in.
-CMD uvicorn app:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000}
+# serve.py reads $PORT itself, so this needs no shell and can use exec form
+# (signals reach the server directly instead of going to a wrapping shell).
+CMD ["python", "backend/serve.py"]
