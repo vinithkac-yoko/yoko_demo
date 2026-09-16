@@ -534,7 +534,7 @@ def _version_svg(version_id: str | None) -> str:
     if not ver:
         return ""
     try:
-        pattern = parse_pattern(ver["xml"])
+        pattern = parse_pattern(ver["xml"], is_text=True)
         sess = PatternSession(pattern, _measurements(ver.get("measurements", "")))
         return agent.render_svg_for(sess)
     except Exception:

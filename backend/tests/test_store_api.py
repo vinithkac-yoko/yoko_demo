@@ -458,3 +458,53 @@ def test_compare_two_runs_shows_the_config_delta(client, monkeypatch):
     diff = {d["field"]: (d["a"], d["b"]) for d in cmp["config_diff"]}
     assert diff["effort"] == ("low", "high")
     assert "system_prompt" not in diff, "identical fields must not show as differences"
+
+
+def test_compare_renders_what_each_run_produced(client, monkeypatch):
+    """Each side of a comparison shows the pattern that run left behind. This
+    caught a real bug: the version XML was parsed as a file path, so the
+    render silently came back empty."""
+    import agent as agent_mod
+
+    v = client.post(
+        "/api/patterns", json={"name": "T", "source": "sample", "sample": "aldrich_basic.sm2d"}
+    ).json()
+    sid = v["session_id"]
+
+    def make_stream(name):
+        def fake_stream(session, instruction, pieces=None, label="", model=None, config=None):
+            # a real edit, so the run auto-saves a version worth rendering
+            op = agent_mod.dispatch_tool(
+                session,
+                "add_point",
+                {
+                    "tool_type": "endLine",
+                    "attrs": {"name": name, "basePoint": "1", "angle": "0", "length": "5"},
+                },
+            )
+            a = agent_mod.Action(
+                step_index=0,
+                tool_name="add_point",
+                tool_input={},
+                reasoning="",
+                ok=op.ok,
+                message=op.message,
+            )
+            yield ("action", a)
+            yield ("done", agent_mod.RunResult(final_text="ok", actions=[a], stopped_reason="done"))
+
+        return fake_stream
+
+    monkeypatch.setattr(agent_mod, "stream_instruction", make_stream("CmpA"))
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "one"}) as r:
+        list(r.iter_text())
+    monkeypatch.setattr(agent_mod, "stream_instruction", make_stream("CmpB"))
+    with client.stream("GET", f"/api/sessions/{sid}/run/stream", params={"text": "two"}) as r:
+        list(r.iter_text())
+
+    runs = client.get(f"/api/sessions/{sid}").json()["runs"]
+    assert all(r["version_after_id"] for r in runs), "successful runs must save a version"
+
+    cmp = client.get(f"/api/runs/{runs[0]['id']}/compare", params={"against": runs[1]["id"]}).json()
+    assert cmp["a"]["svg"].startswith("<svg"), "left side must render its result"
+    assert cmp["b"]["svg"].startswith("<svg"), "right side must render its result"

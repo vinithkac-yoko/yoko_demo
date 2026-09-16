@@ -53,6 +53,34 @@ pytest tests backend/tests -q       # 98 passing
 ruff check . && ruff format --check .
 ```
 
+## Tuning (the playground)
+
+The **⚙ Tuning** button opens the surface that steers every run. Nothing here
+needs a redeploy — edits apply to the next run in that session.
+
+* **System prompt** — the `system` parameter, editable in full.
+* **Tool descriptions** — each of the 13 tools' description is its own
+  mini-prompt the model reads to decide when and how to call it. When a tool
+  is being *misused*, this is usually the better fix than the system prompt.
+  Emptying a box restores the built-in text.
+* **Parameters** — model, max tokens, effort, max steps, and the context
+  knobs: whether the render is attached, its width, and whether block
+  selection narrows the state (`auto`) or the whole pattern goes every turn
+  (`whole` — ~425 objects on the Aldrich sample, the biggest token lever).
+
+**Presets** save a whole config by name. **Every run also stores its own
+resolved copy**, so editing or deleting a preset never rewrites the history of
+what produced a past result — the config each run used is shown under it.
+
+**Comparing** — click ⇄ on two runs to put them side by side: their renders,
+their action logs, and a field-level diff of the two configs. The diff is the
+point: it's what attributes a behaviour change to a specific edit.
+
+**Collecting samples** — rate any run 👍/👎. Rated runs are the corpus;
+**⬇ Samples** in the library downloads them as JSONL, one object per run with
+the instruction, the config behind it, and the full action log including each
+step's reasoning.
+
 ## What you can do
 
 Everything Seamly2D's construction tools support (all 21 point tools, 5 curve

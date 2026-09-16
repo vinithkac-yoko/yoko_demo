@@ -197,6 +197,91 @@
     opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 100;
   }
   #toast.show { opacity: 1; }
+
+  /* --- tuning panel -------------------------------------------------------- */
+  #tune-overlay, #compare-overlay {
+    position: fixed; inset: 0; background: rgba(20,22,26,.35); display: none;
+    align-items: center; justify-content: center; z-index: 60;
+  }
+  #tune-overlay.active, #compare-overlay.active { display: flex; }
+  #tune-panel, #compare-panel {
+    width: min(1100px, 95vw); height: min(780px, 92vh); background: var(--panel);
+    border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #tune-header, #compare-header {
+    display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  #tune-header h3, #compare-header h3 { margin: 0; font-size: 15px; }
+  #tune-header .spacer, #compare-header .spacer { flex: 1; }
+  #tune-status { font-size: 12px; color: var(--text-dim); }
+  #tune-status.dirty { color: var(--accent); font-weight: 600; }
+  #tune-dirty { color: var(--accent); font-weight: 700; margin-left: 2px; }
+
+  #tune-tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .tune-tab {
+    border: none; background: none; padding: 9px 14px; font-size: 13px; cursor: pointer;
+    color: var(--text-dim); border-bottom: 2px solid transparent; border-radius: 0;
+  }
+  .tune-tab:hover { color: var(--text); }
+  .tune-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  #tune-body { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+  .tune-page { display: none; flex: 1; min-height: 0; flex-direction: column; padding: 14px 16px; overflow-y: auto; }
+  .tune-page.active { display: flex; }
+  .tune-hint { margin: 0 0 10px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  .tune-hint code { font-family: var(--mono); background: #f1f3f5; padding: 1px 4px; border-radius: 3px; }
+  #tune-system {
+    flex: 1; min-height: 340px; font-family: var(--mono); font-size: 12.5px;
+    line-height: 1.55; resize: none; white-space: pre-wrap;
+  }
+
+  .tool-edit { border: 1px solid var(--border); border-radius: 7px; margin-bottom: 8px; overflow: hidden; }
+  .tool-edit summary {
+    padding: 8px 12px; cursor: pointer; font-family: var(--mono); font-size: 12.5px;
+    font-weight: 600; display: flex; align-items: center; gap: 8px; background: #fafbfc;
+  }
+  .tool-edit summary:hover { background: #f3f4f6; }
+  .tool-edit .edited { font-family: var(--sans); font-size: 10.5px; font-weight: 600;
+    color: var(--accent); background: var(--accent-dim); padding: 1px 6px; border-radius: 9px; }
+  .tool-edit textarea {
+    width: 100%; border: none; border-top: 1px solid var(--border); border-radius: 0;
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; min-height: 110px;
+    resize: vertical; padding: 10px 12px; display: block;
+  }
+  .tool-edit textarea:focus { outline: 2px solid var(--accent-dim); outline-offset: -2px; }
+
+  .param-grid { display: grid; grid-template-columns: 180px 1fr; gap: 10px 14px; align-items: center; max-width: 620px; }
+  .param-grid label { font-size: 13px; }
+  .param-grid .note { grid-column: 2; font-size: 11.5px; color: var(--text-faint); margin-top: -6px; }
+
+  /* --- compare ------------------------------------------------------------- */
+  #compare-diff { padding: 10px 16px; border-bottom: 1px solid var(--border); background: #fffbeb; flex-shrink: 0; max-height: 150px; overflow-y: auto; }
+  #compare-diff h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #92400e; }
+  #compare-diff .same { font-size: 12px; color: var(--text-dim); font-style: italic; }
+  .diff-row { font-size: 12px; font-family: var(--mono); margin-bottom: 3px; line-height: 1.45; }
+  .diff-row .field { font-weight: 700; }
+  .diff-row .a { color: var(--fail); }
+  .diff-row .b { color: var(--ok); }
+  #compare-body { flex: 1; display: flex; min-height: 0; }
+  .compare-side { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+  .compare-side:last-child { border-right: none; }
+  .compare-side h4 { margin: 0; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border); background: #fafbfc; }
+  .compare-render { flex: 1; min-height: 0; overflow: hidden; padding: 10px; display: flex; align-items: center; justify-content: center; }
+  .compare-render svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+  .compare-actions { flex-shrink: 0; max-height: 190px; overflow-y: auto; border-top: 1px solid var(--border); }
+
+  /* --- run ratings --------------------------------------------------------- */
+  .rate { border: none; background: none; cursor: pointer; padding: 2px 4px; border-radius: 4px; font-size: 13px; opacity: .35; line-height: 1; }
+  .rate:hover { opacity: .8; background: #f1f3f5; }
+  .rate.on { opacity: 1; }
+  .rate.up.on { background: var(--ok-bg); }
+  .rate.down.on { background: var(--fail-bg); }
+  .run-config-tag {
+    font-size: 10.5px; font-family: var(--mono); color: var(--text-faint);
+    padding: 3px 12px 0; cursor: help;
+  }
 </style>
 </head>
 <body>
@@ -209,6 +294,7 @@
       <button id="new-blank">New blank pattern</button>
       <button id="new-sample">Open Aldrich sample</button>
       <button id="new-import">Import .sm2d…</button>
+      <button id="export-samples" title="Download every rated run as JSONL — instruction, config, and the full action log">⬇ Samples</button>
       <input type="file" id="import-file" accept=".sm2d,.val,.xml" class="hidden">
     </div>
   </div>
@@ -224,6 +310,7 @@
     <div class="spacer"></div>
     <select id="block-select"><option value="">Whole pattern</option></select>
     <select id="model-select"></select>
+    <button id="tune-btn" title="Edit the prompt and parameters used for runs">⚙ Tuning<span id="tune-dirty" class="hidden">•</span></button>
     <button id="versions-btn">Versions</button>
     <button id="save-btn">Save</button>
     <button id="export-btn">Export .sm2d</button>
@@ -272,6 +359,70 @@
       </div>
     </div>
     <pre id="detail-raw"></pre>
+  </div>
+</div>
+
+<!-- ============================= TUNING PANEL ============================ -->
+<div id="tune-overlay">
+  <div id="tune-panel">
+    <div id="tune-header">
+      <h3>Tuning</h3>
+      <select id="preset-select" title="Load a saved config"></select>
+      <button id="preset-save">Save as…</button>
+      <button id="preset-update" class="hidden">Update preset</button>
+      <button class="ghost" id="preset-delete" title="Delete this preset">🗑</button>
+      <div class="spacer"></div>
+      <span id="tune-status"></span>
+      <button class="ghost" id="tune-reset" title="Restore the built-in prompt and parameters">Reset to defaults</button>
+      <button class="ghost" id="tune-close">✕</button>
+    </div>
+
+    <div id="tune-tabs">
+      <button class="tune-tab active" data-tab="prompt">System prompt</button>
+      <button class="tune-tab" data-tab="tools">Tool descriptions</button>
+      <button class="tune-tab" data-tab="params">Parameters</button>
+    </div>
+
+    <div id="tune-body">
+      <div class="tune-page active" data-page="prompt">
+        <p class="tune-hint">Sent as the <code>system</code> parameter on every turn. Changes apply to the next run — no redeploy.</p>
+        <textarea id="tune-system" spellcheck="false"></textarea>
+      </div>
+
+      <div class="tune-page" data-page="tools">
+        <p class="tune-hint">Each tool's description is its own mini-prompt — the model reads it to decide when and how to call that tool. When a tool is being misused, this is usually the better fix. Edited tools are marked; empty restores the built-in text.</p>
+        <div id="tune-tools"></div>
+      </div>
+
+      <div class="tune-page" data-page="params">
+        <div class="param-grid" id="tune-params"></div>
+        <p class="tune-hint" id="param-hint"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ COMPARE MODAL ============================ -->
+<div id="compare-overlay">
+  <div id="compare-panel">
+    <div id="compare-header">
+      <h3>Compare runs</h3>
+      <div class="spacer"></div>
+      <button class="ghost" id="compare-close">✕</button>
+    </div>
+    <div id="compare-diff"></div>
+    <div id="compare-body">
+      <div class="compare-side">
+        <h4 id="compare-a-title">A</h4>
+        <div class="compare-render" id="compare-a-render"></div>
+        <div class="compare-actions" id="compare-a-actions"></div>
+      </div>
+      <div class="compare-side">
+        <h4 id="compare-b-title">B</h4>
+        <div class="compare-render" id="compare-b-render"></div>
+        <div class="compare-actions" id="compare-b-actions"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -366,6 +517,7 @@ $("#new-sample").onclick = async () => {
   enterWorkspace(await api("POST", "/api/patterns", { name: "Aldrich basic", source: "sample" }));
 };
 $("#new-import").onclick = () => $("#import-file").click();
+$("#export-samples").onclick = () => { window.location = "/api/samples/export.jsonl"; };
 $("#import-file").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -426,6 +578,17 @@ function render() {
     modelSel.appendChild(o);
   }
   modelSel.value = session.model;
+
+  // Flag on the Tuning button when runs aren't using the stock config.
+  // Defaults are fetched once, in the background — the button works regardless.
+  if (!defaults) {
+    api("GET", "/api/config/defaults")
+      .then((d) => { defaults = d; $("#tune-dirty").classList.toggle("hidden", !customised()); })
+      .catch(() => {});
+  } else {
+    $("#tune-dirty").classList.toggle("hidden", !customised());
+  }
+  if (session.preset_name) $("#tune-btn").title = `Tuning — preset “${session.preset_name}”`;
 
   renderLog();
 }
@@ -560,6 +723,36 @@ function renderRun(run) {
   header.appendChild(el("div", "instruction", run.instruction));
   const meta = el("div", "run-meta");
   meta.appendChild(el("span", `badge ${run.stopped_reason}`, badgeLabel(run.stopped_reason)));
+
+  // Rating: the sample-collection signal. Rated runs are what export emits.
+  for (const [dir, val, glyph, title] of [
+    ["up", 1, "👍", "Good run — keep as a sample"],
+    ["down", -1, "👎", "Bad run — keep as a counter-example"],
+  ]) {
+    const b = el("button", `rate ${dir}${run.rating === val ? " on" : ""}`, glyph);
+    b.title = title;
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      // Clicking the active rating clears it.
+      const next = run.rating === val ? 0 : val;
+      try {
+        await api("POST", `/api/runs/${run.id}/rating`, { rating: next });
+        run.rating = next;
+        renderLog();
+      } catch (err) {
+        toast("Could not rate: " + err.message);
+      }
+    };
+    meta.appendChild(b);
+  }
+
+  const cmp = el("button", "ghost", compareFrom === run.id ? "⇄ pick other" : "⇄");
+  cmp.title = compareFrom === run.id
+    ? "Now click ⇄ on another run to compare"
+    : "Compare this run with another";
+  cmp.onclick = (e) => { e.stopPropagation(); pickCompare(run); };
+  meta.appendChild(cmp);
+
   if (run.version_after_id) {
     const b = el("button", "ghost", "⑂ branch from here");
     b.title = "Open a new session starting from what this run produced";
@@ -582,11 +775,106 @@ function renderRun(run) {
     block.appendChild(list);
   }
 
+  // Provenance: which config produced this result. Runs keep their own copy,
+  // so this stays accurate after the preset is edited or deleted.
+  const cfg = run.config || {};
+  if (cfg.effort) {
+    const bits = [run.preset_name || "ad-hoc", run.model, cfg.effort, `${cfg.max_steps} steps`];
+    if (cfg.state_scope === "whole") bits.push("whole-pattern state");
+    if (!cfg.send_image) bits.push("no image");
+    const tag = el("div", "run-config-tag", bits.join(" · "));
+    tag.title = "The prompt and parameters this run used";
+    block.appendChild(tag);
+  }
+
   if (run.final_text) {
     block.appendChild(el("div", "run-final", run.final_text));
   }
   return block;
 }
+
+// --- compare two runs -----------------------------------------------------
+let compareFrom = null;
+
+function pickCompare(run) {
+  if (!compareFrom) {
+    compareFrom = run.id;
+    toast("Now click ⇄ on the run to compare against.");
+    renderLog();
+    return;
+  }
+  if (compareFrom === run.id) {   // clicking the same run cancels
+    compareFrom = null;
+    renderLog();
+    return;
+  }
+  const a = compareFrom;
+  compareFrom = null;
+  renderLog();
+  openCompare(a, run.id);
+}
+
+async function openCompare(aId, bId) {
+  $("#compare-overlay").classList.add("active");
+  $("#compare-diff").innerHTML = "<span class='same'>Loading…</span>";
+  $("#compare-a-render").innerHTML = "";
+  $("#compare-b-render").innerHTML = "";
+  $("#compare-a-actions").innerHTML = "";
+  $("#compare-b-actions").innerHTML = "";
+  try {
+    const d = await api("GET", `/api/runs/${aId}/compare?against=${encodeURIComponent(bId)}`);
+    renderCompare(d);
+  } catch (err) {
+    $("#compare-diff").innerHTML = "";
+    $("#compare-diff").appendChild(el("span", "same", "Could not compare: " + err.message));
+  }
+}
+
+function renderCompare(d) {
+  const diff = $("#compare-diff");
+  diff.innerHTML = "";
+  diff.appendChild(el("h4", null, "Config differences"));
+  if (!d.config_diff.length) {
+    diff.appendChild(el("span", "same", "Identical config — any difference in the runs is the model's own variance."));
+  }
+  for (const row of d.config_diff) {
+    const r = el("div", "diff-row");
+    r.appendChild(el("span", "field", row.field + ": "));
+    r.appendChild(el("span", "a", summarise(row.a)));
+    r.appendChild(el("span", null, "  →  "));
+    r.appendChild(el("span", "b", summarise(row.b)));
+    diff.appendChild(r);
+  }
+
+  for (const [side, key] of [["a", "a"], ["b", "b"]]) {
+    const s = d[key];
+    const okCount = s.actions.filter((a) => a.ok).length;
+    $(`#compare-${side}-title`).textContent =
+      `${s.run.instruction} — ${badgeLabel(s.run.stopped_reason)}, ${okCount}/${s.actions.length} ok`;
+    $(`#compare-${side}-render`).innerHTML =
+      s.svg || "<span style='color:var(--text-faint);font-size:12px'>No saved render (run made no change)</span>";
+    const list = $(`#compare-${side}-actions`);
+    list.innerHTML = "";
+    for (const a of s.actions) list.appendChild(renderAction(null, a));
+    if (!s.actions.length) {
+      list.appendChild(el("div", "run-final", "No actions."));
+    }
+  }
+}
+
+// Long values (a whole system prompt) are unreadable inline — say how it
+// differs rather than dumping it.
+function summarise(v) {
+  if (typeof v === "string" && v.length > 60) return `«${v.length} chars»`;
+  if (v && typeof v === "object") {
+    const keys = Object.keys(v);
+    return keys.length ? `{${keys.join(", ")}}` : "{}";
+  }
+  return JSON.stringify(v);
+}
+
+$("#compare-close").onclick = () => $("#compare-overlay").classList.remove("active");
+$("#compare-overlay").onclick = (e) => { if (e.target.id === "compare-overlay") $("#compare-overlay").classList.remove("active"); };
 
 function badgeLabel(reason) {
   return { done: "done", error: "error", max_steps: "stopped (max steps)", no_key: "no API key" }[reason] || reason;
@@ -668,6 +956,211 @@ $("#versions-btn").onclick = async () => {
 };
 $("#versions-close").onclick = () => $("#versions-overlay").classList.remove("active");
 $("#versions-overlay").onclick = (e) => { if (e.target.id === "versions-overlay") $("#versions-overlay").classList.remove("active"); };
+
+// --- tuning panel ---------------------------------------------------------
+// `defaults` is the built-in config + tool text (for reset and for showing
+// which tools have been edited); `working` is what the next run will use.
+let defaults = null;
+let working = null;
+let presets = [];
+
+const PARAMS = [
+  { key: "max_tokens", label: "Max tokens", type: "number", min: 256, max: 128000, step: 256,
+    note: "Hard ceiling per model response. Thinking counts against this too." },
+  { key: "effort", label: "Effort", type: "select", options: ["low", "medium", "high", "xhigh", "max"],
+    note: "How hard it deliberates. Bounds thinking independently of max tokens — the lever against runs that think until the budget is gone without acting." },
+  { key: "max_steps", label: "Max steps", type: "number", min: 1, max: 60, step: 1,
+    note: "Tool-call rounds before the run stops. Caps worst-case cost." },
+  { key: "state_scope", label: "State scope", type: "select", options: ["auto", "whole"],
+    note: "auto = the selected block only; whole = the entire pattern every turn (~425 objects on Aldrich). The biggest token lever here." },
+  { key: "send_image", label: "Send image", type: "checkbox",
+    note: "Attach the rendered pattern. The structured state is the primary input either way." },
+  { key: "vision_width", label: "Vision width", type: "number", min: 200, max: 2000, step: 50,
+    note: "Image tokens scale with pixel area. Ignored when the image is off." },
+];
+
+async function loadTuning() {
+  if (!defaults) defaults = await api("GET", "/api/config/defaults");
+  working = JSON.parse(JSON.stringify(session.config || defaults.config));
+  await refreshPresets();
+  renderTuning();
+}
+
+async function refreshPresets() {
+  presets = (await api("GET", "/api/presets")).presets;
+  const sel = $("#preset-select");
+  sel.innerHTML = '<option value="">— no preset —</option>';
+  for (const p of presets) {
+    const o = el("option", null, p.name);
+    o.value = p.id;
+    sel.appendChild(o);
+  }
+  const match = presets.find((p) => p.name === (session.preset_name || ""));
+  sel.value = match ? match.id : "";
+  $("#preset-update").classList.toggle("hidden", !match);
+  $("#preset-delete").classList.toggle("hidden", !match);
+}
+
+function isDirty() {
+  return JSON.stringify(working) !== JSON.stringify(session.config || defaults.config);
+}
+
+function markDirty() {
+  const dirty = isDirty();
+  $("#tune-status").textContent = dirty ? "unsaved — applies on save" : "";
+  $("#tune-status").classList.toggle("dirty", dirty);
+  $("#tune-dirty").classList.toggle("hidden", !customised());
+}
+
+// Does the working config differ from the built-in defaults? (Shown as a dot
+// on the toolbar button, so it's obvious at a glance that runs aren't stock.)
+function customised() {
+  const base = defaults && defaults.config;
+  return !!base && JSON.stringify(working || session.config) !== JSON.stringify(base);
+}
+
+function renderTuning() {
+  $("#tune-system").value = working.system_prompt;
+
+  const tools = $("#tune-tools");
+  tools.innerHTML = "";
+  for (const t of defaults.tools) {
+    const override = working.tool_descriptions[t.name];
+    const box = el("details", "tool-edit");
+    const sum = el("summary");
+    sum.appendChild(el("span", null, t.name));
+    if (override) sum.appendChild(el("span", "edited", "edited"));
+    box.appendChild(sum);
+    const ta = el("textarea");
+    ta.value = override || t.description;
+    ta.spellcheck = false;
+    ta.oninput = () => {
+      const v = ta.value.trim();
+      // Matching the built-in text (or emptying the box) clears the override,
+      // so "edited" always means genuinely different from stock.
+      if (!v || v === t.description) delete working.tool_descriptions[t.name];
+      else working.tool_descriptions[t.name] = ta.value;
+      sum.querySelector(".edited")?.remove();
+      if (working.tool_descriptions[t.name]) sum.appendChild(el("span", "edited", "edited"));
+      markDirty();
+    };
+    box.appendChild(ta);
+    tools.appendChild(box);
+  }
+
+  const grid = $("#tune-params");
+  grid.innerHTML = "";
+  for (const p of PARAMS) {
+    grid.appendChild(el("label", null, p.label));
+    let input;
+    if (p.type === "select") {
+      input = el("select");
+      for (const o of p.options) {
+        const opt = el("option", null, o);
+        opt.value = o;
+        input.appendChild(opt);
+      }
+      input.value = working[p.key];
+      input.onchange = () => { working[p.key] = input.value; markDirty(); };
+    } else if (p.type === "checkbox") {
+      input = el("input");
+      input.type = "checkbox";
+      input.checked = !!working[p.key];
+      input.onchange = () => { working[p.key] = input.checked; markDirty(); };
+    } else {
+      input = el("input");
+      input.type = "number";
+      Object.assign(input, { min: p.min, max: p.max, step: p.step, value: working[p.key] });
+      input.onchange = () => { working[p.key] = Number(input.value); markDirty(); };
+    }
+    grid.appendChild(input);
+    grid.appendChild(el("div", "note", p.note));
+  }
+  markDirty();
+}
+
+$("#tune-system").addEventListener("input", () => {
+  working.system_prompt = $("#tune-system").value;
+  markDirty();
+});
+
+for (const tab of document.querySelectorAll(".tune-tab")) {
+  tab.onclick = () => {
+    document.querySelectorAll(".tune-tab").forEach((t) => t.classList.toggle("active", t === tab));
+    document.querySelectorAll(".tune-page").forEach((p) =>
+      p.classList.toggle("active", p.dataset.page === tab.dataset.tab));
+  };
+}
+
+$("#tune-btn").onclick = async () => {
+  try {
+    await loadTuning();
+    $("#tune-overlay").classList.add("active");
+  } catch (err) {
+    toast("Could not load tuning: " + err.message);
+  }
+};
+
+async function applyWorking(presetName) {
+  const body = { config: working, preset_name: presetName !== undefined ? presetName : (session.preset_name || "") };
+  await api("POST", `/api/sessions/${session.session_id}/config`, body);
+  await refresh();
+  working = JSON.parse(JSON.stringify(session.config));
+  markDirty();
+}
+
+$("#tune-close").onclick = async () => {
+  if (isDirty()) {
+    try { await applyWorking(); toast("Tuning applied to this session."); }
+    catch (err) { toast("Could not apply: " + err.message); return; }
+  }
+  $("#tune-overlay").classList.remove("active");
+};
+$("#tune-overlay").onclick = (e) => { if (e.target.id === "tune-overlay") $("#tune-close").onclick(); };
+
+$("#tune-reset").onclick = () => {
+  working = JSON.parse(JSON.stringify(defaults.config));
+  renderTuning();
+  toast("Reset to built-in defaults — close to apply.");
+};
+
+$("#preset-select").onchange = async () => {
+  const p = presets.find((x) => x.id === $("#preset-select").value);
+  working = JSON.parse(JSON.stringify(p ? p.config : defaults.config));
+  renderTuning();
+  await applyWorking(p ? p.name : "");
+  await refreshPresets();
+  toast(p ? `Loaded “${p.name}”.` : "Cleared preset.");
+};
+
+$("#preset-save").onclick = async () => {
+  const name = prompt("Save this config as:");
+  if (!name || !name.trim()) return;
+  await api("POST", "/api/presets", { name: name.trim(), config: working });
+  await applyWorking(name.trim());
+  await refreshPresets();
+  toast(`Saved “${name.trim()}”.`);
+};
+
+$("#preset-update").onclick = async () => {
+  const id = $("#preset-select").value;
+  const p = presets.find((x) => x.id === id);
+  if (!p) return;
+  await api("PUT", `/api/presets/${id}`, { name: p.name, config: working });
+  await applyWorking(p.name);
+  await refreshPresets();
+  toast(`Updated “${p.name}”.`);
+};
+
+$("#preset-delete").onclick = async () => {
+  const id = $("#preset-select").value;
+  const p = presets.find((x) => x.id === id);
+  if (!p || !confirm(`Delete preset “${p.name}”? The runs that used it keep their own copy.`)) return;
+  await api("DELETE", `/api/presets/${id}`);
+  await applyWorking("");
+  await refreshPresets();
+  toast("Preset deleted.");
+};
 
 // --- resizable divider ----------------------------------------------------
 (() => {
